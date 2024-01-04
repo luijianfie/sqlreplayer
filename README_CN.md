@@ -5,7 +5,7 @@
 # sqlreplayer
 sqlreplayer能从mysql的general log，slow log以及csv文件获取raw sql，并在多个支持mysql协议的数据库上回放，得到sql执行的统计分析报告。
 
-支持 mysql 5.6,5.7,8.0 
+analyze部分支持 mysql 5.6,5.7,8.0下的general log，slow log
 
 
 # analyze 
