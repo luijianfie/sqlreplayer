@@ -17,19 +17,21 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/luijianfie/sqlreplayer/utils"
 )
 
 var (
-	execType   string
-	fileName   string
-	logType    string
-	beginStr   string
-	endStr     string
-	connStr    string
-	dbs        []*sql.DB
-	charSet    string
-	threads    int
-	multiplier int
+	execType     string
+	fileName     string
+	logType      string
+	beginStr     string
+	endStr       string
+	connStr      string
+	dbs          []*sql.DB
+	charSet      string
+	threads      int
+	multiplier   int
+	isSelectOnly bool
 
 	RawSQLCSVPath string
 
@@ -58,6 +60,7 @@ func main() {
 	flag.StringVar(&charSet, "charset", "utf8mb4", "charset of connection")
 	flag.IntVar(&threads, "threads", 1, "thread num while replaying")
 	flag.IntVar(&multiplier, "m", 1, "number of times a raw sql to be executed while replaying")
+	flag.BoolVar(&isSelectOnly, "select-only", false, "replay select statement only")
 	flag.Parse()
 
 	if flagParseNotValid() {
@@ -97,7 +100,7 @@ func main() {
 				logger.Println(params)
 				return
 			}
-			db, err := initConnection(params, threads)
+			db, err := initConnection(params[0], params[1], params[2], params[3], params[4], threads)
 			if err != nil {
 				logger.Println(err)
 				return
@@ -146,7 +149,7 @@ func main() {
 			cu.QueryID, _ = GetQueryID(cu.Argument)
 
 			//save to raw sql file
-			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"),cu.CommandType})
+			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType})
 			if err != nil {
 				panic(err)
 			}
@@ -205,9 +208,9 @@ func flagParseNotValid() bool {
 	return false
 }
 
-func initConnection(params []string, threads int) (*sql.DB, error) {
+func initConnection(user, passwd, ip, port, dbName string, threads int) (*sql.DB, error) {
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", params[0], params[1], params[2], params[3], params[4])
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, passwd, ip, port, dbName)
 
 	db, err := sql.Open("mysql", dsn)
 
@@ -282,14 +285,26 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 		}
 
-		wg.Add(1)
-		rowCount++
+
 
 		//first column for raw sql
 		//second column for sqlid
-
 		sql := record[0]
 		qid := ""
+
+		//check if sql is a SELECT statement
+		if isSelectOnly {
+			rets, err := utils.IsSelectStatement(sql)
+
+			if err != nil || len(rets) == 0 {
+				logger.Printf("failed to parse sql [%s],err [%s]", sql,err.Error())
+				continue
+			}
+			//not select statement,skip it
+			if !rets[0] {
+				continue
+			}
+		}
 
 		//generate sqlid for sql if empty
 		if len(record) < 2 {
@@ -297,6 +312,9 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 		} else {
 			qid = record[1]
 		}
+
+		wg.Add(1)
+		rowCount++
 
 		mu.Lock()
 		_, ok := queryID2RelayStats[qid]

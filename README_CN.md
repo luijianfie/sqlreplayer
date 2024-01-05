@@ -1,6 +1,4 @@
-
 [简体中文](./README_CN.md)|[English](./README.md)
-
 
 # sqlreplayer
 sqlreplayer能从mysql的general log，slow log以及csv文件获取raw sql，并在多个支持mysql协议的数据库上回放，得到sql执行的统计分析报告。
@@ -19,7 +17,7 @@ analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取ra
 
 抓取原始sql的时候，可以增加一些条件来筛选sql，如下面的命令能够抓取10点到10点半之间的慢查询
 
->./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin 2024-01-01 10:00:00 -end 2024-01-01 10:30:00 
+>./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00"
 
 
 

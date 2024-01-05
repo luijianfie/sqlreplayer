@@ -18,7 +18,7 @@ generate raw sql from general log,slow log or csv which can be used in sql repla
 
 you can also grasp raw sql in a period of time. Folowing sample will generate raw sql which is executed between 10:00 and 10:30.
 
->./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin 2024-01-01 10:00:00 -end 2024-01-01 10:30:00 
+>./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00" 
 
 
 
