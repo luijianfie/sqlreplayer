@@ -35,12 +35,12 @@ var (
 		`^(?s)(?:` + strings.Join([]string{
 			`\S+, Version: \S+ (.+). started with:.*`,
 			`Tcp port: \d+  Unix socket: \S+.*`,
-			`Time                 Id Command    Argument.*`,`# Query_time:`,
+			`Time                 Id Command    Argument.*`,
 		}, "|") + `)|^(?i)(use |set ).*$`)
-	slowlogUserHostRe *regexp.Regexp  = regexp.MustCompile(`^(?s)(?:# User@Host: .*)`)
-	slowlogTimeRe56 *regexp.Regexp = regexp.MustCompile(`(?s)^# Time: (\d{6}\s+\d{1,2}:\d{2}:\d{2})`)
-	slowlogTimeRe *regexp.Regexp = regexp.MustCompile(`(?s)^# Time: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{6}\+\d{2}:\d{2}`)
-
+	slowlogUserHostRe  *regexp.Regexp = regexp.MustCompile(`^(?s)(?:# User@Host: .*)`)
+	slowlogTimeRe56    *regexp.Regexp = regexp.MustCompile(`(?s)^# Time: (\d{6}\s+\d{1,2}:\d{2}:\d{2})`)
+	slowlogTimeRe      *regexp.Regexp = regexp.MustCompile(`(?s)^# Time: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{6}\+\d{2}:\d{2}`)
+	slowlogQuerytimeRe *regexp.Regexp = regexp.MustCompile(`(?s)^# Query_time: (\d+\.\d+).*`)
 )
 
 type CommandUnit struct {
@@ -49,6 +49,7 @@ type CommandUnit struct {
 	CommandType string
 	Argument    string
 	QueryID     string
+	Elapsed     float64
 }
 
 type GeneralLogParser struct {
@@ -126,7 +127,6 @@ func (g *GeneralLogParser) Parser(fd io.Reader, handler func(cu *CommandUnit)) e
 			cmdUnit.Argument += line
 		}
 
-
 		if isEOF {
 			handler(cmdUnit)
 		}
@@ -140,13 +140,14 @@ type SlowlogParser struct {
 }
 
 func (s *SlowlogParser) Parser(fd io.Reader, handler func(cu *CommandUnit)) error {
-var (
-		cmdUnit     *CommandUnit
-		err         error
+	var (
+		cmdUnit *CommandUnit
+		err     error
 		// currentTime time.Time
 		isEOF       bool
-		timeRe *regexp.Regexp
+		timeRe      *regexp.Regexp
 		currentTime time.Time
+		timeElasped float64
 	)
 
 	reader := bufio.NewReader(fd)
@@ -167,57 +168,64 @@ var (
 		}
 
 		// if timeRe == nil {
-		if slowlogTimeRe.MatchString(line){
+		if slowlogTimeRe.MatchString(line) {
 			timeRe = slowlogTimeRe
-		}else if  slowlogTimeRe56.MatchString(line){
+		} else if slowlogTimeRe56.MatchString(line) {
 			timeRe = slowlogTimeRe56
 		}
 		// }
 
-		if timeRe !=nil {
-			if m := timeRe.FindStringSubmatch(line); m != nil{
+		if timeRe != nil {
+			if m := timeRe.FindStringSubmatch(line); m != nil {
 
-			// mysql5.6 don't save current time for each sql but only keep one timestamp every second
-			if timeRe == slowlogTimeRe56 {
+				// mysql5.6 don't save current time for each sql but only keep one timestamp every second
+				if timeRe == slowlogTimeRe56 {
 					currentTime, err = time.Parse("20060102 15:04:05", yearPrefix+m[1])
 					//almost impossible
 					if err != nil {
 						return err
 					}
-			} else {
-				currentTime, err = time.Parse("2006-01-02T15:04:05", m[1])
-				//almost impossible
-				if err != nil {
-					return err
+				} else {
+					currentTime, err = time.Parse("2006-01-02T15:04:05", m[1])
+					//almost impossible
+					if err != nil {
+						return err
+					}
 				}
+				continue
 			}
-			continue
-		}
 		}
 
-		
-		if slowlogUserHostRe.MatchString(line){
-			if cmdUnit !=nil{
+		if slowlogUserHostRe.MatchString(line) {
+			if cmdUnit != nil {
 				handler(cmdUnit)
 				cmdUnit = nil
 			}
 			continue
 		}
 
-		if cmdUnit ==nil{
-			cmdUnit = &CommandUnit{Time: currentTime}
+		if m := slowlogQuerytimeRe.FindStringSubmatch(line); m != nil {
+
+			queryTime, err := strconv.ParseFloat(m[1], 64)
+			if err != nil {
+				logger.Println("Error converting string to float64:", err)
+			}
+			timeElasped = queryTime
+			continue
 		}
-		cmdUnit.Argument+=line
+
+		if cmdUnit == nil {
+			cmdUnit = &CommandUnit{Time: currentTime, Elapsed: timeElasped}
+		}
+		cmdUnit.Argument += line
 	}
 
-		if isEOF {
-			handler(cmdUnit)
-		}
-
-		return err
+	if isEOF {
+		handler(cmdUnit)
 	}
 
-
+	return err
+}
 
 type CSVParser struct {
 }

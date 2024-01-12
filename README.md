@@ -11,14 +11,14 @@ analyze part support general log,slow log in mysql 5.6,5.7,8.0
 
 generate raw sql from general log,slow log or csv which can be used in sql replay
 
-> ./sqlReplayer -exec analyze -f test_general_1.log -logtype genlog  
+> ./sqlreplayer -exec analyze -f test_general_1.log -logtype genlog  
 [analyze]2023/12/28 17:20:50 begin to read genlog test_general_1.log  
 [analyze]2023/12/28 17:20:50 finish reading genlog test_general_1.log  
 [analyze]2023/12/28 17:20:50 raw sql save to 20231228_172050_rawsql.csv  
 
 you can also grasp raw sql in a period of time. Folowing sample will generate raw sql which is executed between 10:00 and 10:30.
 
->./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00" 
+>./sqlreplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00" 
 
 
 
@@ -26,7 +26,7 @@ you can also grasp raw sql in a period of time. Folowing sample will generate ra
 
 for example, the following command line is to replay sql in data sources ip1:port1 and ip2:port2
 
->./sqlReplayer -exec replay -f test.csv -conn  'user1:passwd1:ip1:port1:db1,user2:passwd2:ip2:port2:db2'  
+>./sqlreplayer -exec replay -f test.csv -conn  'user1:passwd1:ip1:port1:db1,user2:passwd2:ip2:port2:db2'  
 [init]2023/12/28 16:57:02 conn 0 [user1:passwd1:ip1:port1:db1]  
 [init]2023/12/28 16:57:02 conn 1 [user2:passwd2:ip2:port2:db2]  
 [replay]2023/12/28 16:57:08 reach the end of log file.  

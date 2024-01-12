@@ -21,19 +21,20 @@ import (
 )
 
 var (
-	execType     string
-	fileName     string
-	logType      string
-	beginStr     string
-	endStr       string
-	connStr      string
-	dbs          []*sql.DB
-	charSet      string
-	threads      int
-	multiplier   int
-	isSelectOnly bool
-
-	RawSQLCSVPath string
+	execType         string
+	fileName         string
+	logType          string
+	beginStr         string
+	endStr           string
+	connStr          string
+	dbs              []*sql.DB
+	charSet          string
+	threads          int
+	multiplier       int
+	isSelectOnly     bool
+	ifGenerateReport bool
+	RawSQLCSVPath    string
+	CurrentTimeStr   string = time.Now().Format("20060102_150405")
 
 	parser LogParser
 
@@ -61,6 +62,7 @@ func main() {
 	flag.IntVar(&threads, "threads", 1, "thread num while replaying")
 	flag.IntVar(&multiplier, "m", 1, "number of times a raw sql to be executed while replaying")
 	flag.BoolVar(&isSelectOnly, "select-only", false, "replay select statement only")
+	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
 	flag.Parse()
 
 	if flagParseNotValid() {
@@ -118,8 +120,11 @@ func main() {
 	//analyze file
 	switch execType {
 	case "analyze", "both":
+
+		sqlID2sql := make(map[string][]sqlReplay)
+
 		logger.Printf("begin to read %s %s\n", logType, fileName)
-		RawSQLCSVPath = time.Now().Format("20060102_150405") + "_rawsql.csv"
+		RawSQLCSVPath = CurrentTimeStr + "_rawsql.csv"
 		switch logType {
 
 		case "genlog":
@@ -154,6 +159,10 @@ func main() {
 				panic(err)
 			}
 
+			if ifGenerateReport {
+				sqlID2sql[cu.QueryID] = append(sqlID2sql[cu.QueryID], sqlReplay{sqlid: cu.QueryID, sqltype: cu.CommandType, sql: cu.Argument, time: uint64(cu.Elapsed * 1000)})
+			}
+
 		})
 
 		if err != nil {
@@ -166,6 +175,10 @@ func main() {
 
 		logger.Printf("finish reading %s %s\n", logType, fileName)
 		logger.Printf("raw sql save to %s\n", RawSQLCSVPath)
+
+		if ifGenerateReport {
+			generateAnalyzeReport(sqlID2sql)
+		}
 
 	case "replay":
 		RawSQLCSVPath = fileName
@@ -236,7 +249,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 	reader.LazyQuotes = true
 
 	//create file to save stats info
-	statsOutFile := time.Now().Format("20060102_150405") + "_replay_stats.csv"
+	statsOutFile := CurrentTimeStr + "_replay_stats.csv"
 	statsFile, err := os.Create(statsOutFile)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -285,8 +298,6 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 		}
 
-
-
 		//first column for raw sql
 		//second column for sqlid
 		sql := record[0]
@@ -297,7 +308,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			rets, err := utils.IsSelectStatement(sql)
 
 			if err != nil || len(rets) == 0 {
-				logger.Printf("failed to parse sql [%s],err [%s]", sql,err.Error())
+				logger.Printf("failed to parse sql [%s],err [%s]. skip it.", sql, err.Error())
 				continue
 			}
 			//not select statement,skip it
@@ -426,4 +437,43 @@ func analyzer(arr []sqlReplay) (min, percentile, max sqlReplay, count uint64, av
 	average = float64(sum) / float64(len(arr))
 	count = uint64(len(arr))
 	return
+}
+
+func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
+
+	analyzeReportFile := CurrentTimeStr + "_analyze_report.csv"
+	reportFile, err := os.Create(analyzeReportFile)
+	if err != nil {
+		logger.Printf(err.Error())
+	}
+	defer reportFile.Close()
+	writer := csv.NewWriter(reportFile)
+	defer writer.Flush()
+
+	header := []string{"sqlid", "sqltype"}
+	subHeaders := []string{"min(ms)", "min-sql",
+		"p99(ms)", "p99-sql",
+		"max(ms)", "max-sql",
+		"avg(ms)", "execution"}
+	header = append(header, subHeaders...)
+
+	err = writer.Write(header)
+	if err != nil {
+		panic(err)
+	}
+
+	for k, sqls := range sqlID2sql {
+		row := []string{k, sqls[0].sqltype}
+		srMin, sr99, srMax, count, avg := analyzer(sqls)
+		row = append(row, []string{
+			strconv.FormatUint(srMin.time, 10), srMin.sql,
+			strconv.FormatUint(sr99.time, 10), sr99.sql,
+			strconv.FormatUint(srMax.time, 10), srMax.sql,
+			strconv.FormatFloat(avg, 'f', 2, 64), strconv.FormatUint(count, 10)}...)
+		err = writer.Write(row)
+		if err != nil {
+			panic(err)
+		}
+	}
+	logger.Printf("raw sql save to %s\n", analyzeReportFile)
 }
