@@ -154,7 +154,7 @@ func main() {
 			cu.QueryID, _ = GetQueryID(cu.Argument)
 
 			//save to raw sql file
-			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType})
+			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
 			if err != nil {
 				panic(err)
 			}

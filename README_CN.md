@@ -1,12 +1,23 @@
 [简体中文](./README_CN.md)|[English](./README.md)
 
-# sqlreplayer
+# sqlreplayer是什么
 sqlreplayer能从mysql的general log，slow log以及csv文件获取raw sql，并在多个支持mysql协议的数据库上回放，得到sql执行的统计分析报告。
 
 analyze部分支持 mysql 5.6,5.7,8.0下的general log，slow log
 
+# 为什么需要sqlreplayer
 
-# analyze 
+这个工具使用的初衷是需要比较业务sql在多个数据库下的性能差异，并生成简单比对结果。
+主要涉及到两个部分，一个是sql采集，工具支持从mysql的全量日志、慢日志、csv文件进行raw sql的采集，汇总。另一个sql回放，sql回放支持在多个数据源对raw sql进行回放，并得到比对结果。
+
+# 三种模式
+
+analyze：采集日志的raw sql，也可以对这部分raw sql按照sqlid进行聚合，给出建议统计报告
+replay：将指定的raw sql在多个数据源上回放，给出在多个数据源执行结果比对
+both：analyze和的replay的结合
+
+
+## analyze 
 
 analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取raw sql，并以csv格式的文件输出
 
@@ -20,8 +31,17 @@ analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取ra
 >./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00"
 
 
+分析原始sql的时候，对sql分布按照sqlid进行简单统计
 
-# replay 
+>./sqlreplayer -exec analyze -f slow.log -logtype slowlog -generate-report  
+[analyze]2024/01/15 11:03:26 begin to read slowlog slow.log  
+[analyze]2024/01/15 11:03:26 finish reading slowlog slow.log  
+[analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_rawsql.csv  
+[analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_analyze_report.csv  
+
+## replay 
+
+1）sql回放
 
 replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和ip2:port2两个数据源上进行回放，以此来比较性能差异
 
@@ -49,7 +69,14 @@ replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和
 | 16219655761820A2 |         | 44             | select 1       | 44             | select 2       | 45             | select 3       | 44.33          | 3                | 44             | select 2       | 44             | select 3       | 45             | select 1       | 44.33          | 3                |
 | EE3DCDA8BEC5E966 |         | 1189           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3047           | select 3,sleep(3) | 2094.00        | 3                | 1186           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3048           | select 3,sleep(3) | 2093.33        | 3                |
 
+replay相关的其他参数
 
-# both
+>-m: 回放倍数，每个raw sql执行次数，默认是1  
+-threads: 回放并发数，默认是1  
+-select-only: 是否只回访select语句，默认是false
+-charset: 默认为utf8mb4
+
+
+## both
 
 both模式是analyze和replay阶段结合，从日志采集到raw sql之后直接在配置的数据源下进行回放。

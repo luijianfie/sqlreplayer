@@ -7,7 +7,12 @@ retrieve raw SQL queries from MySQL's general log, slow log, and CSV files, and 
 
 analyze part support general log,slow log in mysql 5.6,5.7,8.0 
 
-# analyze 
+# why sqlreplayer
+
+The initial intention of using this tool is to compare the performance differences of SQL under multiple databases, and generate simple comparison results. 
+It mainly involves two parts. One is SQL collection, the tool supports collecting raw SQL from MySQL's full logs, slow logs, and CSV files for aggregation. The other is SQL replay, SQL replay supports replaying raw SQL on multiple data sources and obtaining comparison results.
+
+## analyze 
 
 generate raw sql from general log,slow log or csv which can be used in sql replay
 
@@ -20,9 +25,16 @@ you can also grasp raw sql in a period of time. Folowing sample will generate ra
 
 >./sqlreplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00" 
 
+When analyzing the original SQL, simple statistics are conducted according to the SQLID distribution with "-generate-report".
+
+>./sqlreplayer -exec analyze -f slow.log -logtype slowlog -generate-report  
+[analyze]2024/01/15 11:03:26 begin to read slowlog slow.log  
+[analyze]2024/01/15 11:03:26 finish reading slowlog slow.log  
+[analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_rawsql.csv  
+[analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_analyze_report.csv  
 
 
-# replay 
+## replay 
 
 for example, the following command line is to replay sql in data sources ip1:port1 and ip2:port2
 
@@ -54,6 +66,13 @@ sql will be grouped according to sqlid, and you can have a glance of sql's perfo
 | EE3DCDA8BEC5E966 |         | 1189           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3047           | select 3,sleep(3) | 2094.00        | 3                | 1186           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3048           | select 3,sleep(3) | 2093.33        | 3                |
 
 
-# both
+other parameters
+
+>-m: number of times a raw sql to be executed while replaying,default 1  
+-threads: thread num while replaying,default 1
+-select-only: replay select statement only,default false
+-charset: charset of connection, default utf8mb4
+
+## both
 
 "both" combines the analyze and replay stages, directly replaying raw SQL statements collected from logs under the configured data source after the collection process.
