@@ -21,20 +21,23 @@ import (
 )
 
 var (
-	execType         string
-	fileName         string
-	logType          string
-	beginStr         string
-	endStr           string
-	connStr          string
-	dbs              []*sql.DB
-	charSet          string
-	threads          int
-	multiplier       int
-	isSelectOnly     bool
-	ifGenerateReport bool
-	RawSQLCSVPath    string
-	CurrentTimeStr   string = time.Now().Format("20060102_150405")
+	execType             string
+	fileName             string
+	logType              string
+	beginStr             string
+	endStr               string
+	connStr              string
+	dbs                  []*sql.DB
+	charSet              string
+	threads              int
+	multiplier           int
+	isSelectOnly         bool
+	ifGenerateReport     bool
+	ifSaveRawSQLInReport bool
+	RawSQLCSVPath        string
+	CurrentTimeStr       string = time.Now().Format("20060102_150405")
+
+	sqlID2Fingerprint map[string]string = make(map[string]string)
 
 	parser LogParser
 
@@ -63,6 +66,7 @@ func main() {
 	flag.IntVar(&multiplier, "m", 1, "number of times a raw sql to be executed while replaying")
 	flag.BoolVar(&isSelectOnly, "select-only", false, "replay select statement only")
 	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
+	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
 	flag.Parse()
 
 	if flagParseNotValid() {
@@ -121,7 +125,8 @@ func main() {
 	switch execType {
 	case "analyze", "both":
 
-		sqlID2sql := make(map[string][]sqlReplay)
+		var fingerprint string
+		sqlID2RawSQL := make(map[string][]sqlReplay)
 
 		logger.Printf("begin to read %s %s\n", logType, fileName)
 		RawSQLCSVPath = CurrentTimeStr + "_rawsql.csv"
@@ -151,7 +156,12 @@ func main() {
 			}
 
 			//generate query id
-			cu.QueryID, _ = GetQueryID(cu.Argument)
+			cu.QueryID, fingerprint = GetQueryID(cu.Argument)
+
+			_, ok := sqlID2Fingerprint[cu.QueryID]
+			if !ok {
+				sqlID2Fingerprint[cu.QueryID] = fingerprint
+			}
 
 			//save to raw sql file
 			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
@@ -160,7 +170,13 @@ func main() {
 			}
 
 			if ifGenerateReport {
-				sqlID2sql[cu.QueryID] = append(sqlID2sql[cu.QueryID], sqlReplay{sqlid: cu.QueryID, sqltype: cu.CommandType, sql: cu.Argument, time: uint64(cu.Elapsed * 1000)})
+				sr := sqlReplay{sqlid: cu.QueryID, sqltype: cu.CommandType, time: uint64(cu.Elapsed * 1000)}
+
+				if ifSaveRawSQLInReport {
+					sr.sql = cu.Argument
+				}
+
+				sqlID2RawSQL[cu.QueryID] = append(sqlID2RawSQL[cu.QueryID], sr)
 			}
 
 		})
@@ -177,7 +193,7 @@ func main() {
 		logger.Printf("raw sql save to %s\n", RawSQLCSVPath)
 
 		if ifGenerateReport {
-			generateAnalyzeReport(sqlID2sql)
+			generateAnalyzeReport(sqlID2RawSQL)
 		}
 
 	case "replay":
@@ -231,6 +247,7 @@ func initConnection(user, passwd, ip, port, dbName string, threads int) (*sql.DB
 		return nil, err
 	}
 	db.SetMaxOpenConns(threads)
+	db.SetMaxIdleConns(threads)
 	return db, nil
 
 }
@@ -286,6 +303,8 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 	queryID2RelayStats := make(map[string][][]sqlReplay)
 
 	for {
+
+		var sqlid, fingerprint string
 		record, err := reader.Read()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -301,7 +320,6 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 		//first column for raw sql
 		//second column for sqlid
 		sql := record[0]
-		qid := ""
 
 		//check if sql is a SELECT statement
 		if isSelectOnly {
@@ -318,19 +336,19 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 		}
 
 		//generate sqlid for sql if empty
-		if len(record) < 2 {
-			qid, _ = GetQueryID(sql)
-		} else {
-			qid = record[1]
-		}
+		sqlid, fingerprint = GetQueryID(sql)
 
 		wg.Add(1)
 		rowCount++
+		_, ok := sqlID2Fingerprint[sqlid]
+		if !ok {
+			sqlID2Fingerprint[sqlid] = fingerprint
+		}
 
 		mu.Lock()
-		_, ok := queryID2RelayStats[qid]
+		_, ok = queryID2RelayStats[sqlid]
 		if !ok {
-			queryID2RelayStats[qid] = make([][]sqlReplay, len(dbs))
+			queryID2RelayStats[sqlid] = make([][]sqlReplay, len(dbs))
 		}
 		mu.Unlock()
 
@@ -347,16 +365,23 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 
 					start := time.Now()
 
-					db.Exec(sql)
+					_, err := db.Exec(sql)
+
+					if err != nil {
+						logger.Printf("error for sql:%s,error:%s\n", sql, err.Error())
+						continue
+					}
 
 					elapsed := time.Since(start)
 					elapsedMilliseconds := elapsed.Milliseconds()
 
 					sr.time = uint64(elapsedMilliseconds)
-					sr.sql = sql
+					if ifSaveRawSQLInReport {
+						sr.sql = sql
+					}
 					mu.Lock()
 
-					conns2ReplayStats := queryID2RelayStats[qid]
+					conns2ReplayStats := queryID2RelayStats[sqlid]
 					conns2ReplayStats[ind] = append(conns2ReplayStats[ind], sr)
 					mu.Unlock()
 				}
@@ -369,9 +394,14 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 	<-readFileDone
 	wg.Wait()
 
+	elapsed := time.Since(begin).Seconds()
+	logger.Printf("sql replay finish ,num of raw sql %d,time elasped %fs.\n", rowCount, elapsed)
+
+	logger.Printf("begin to generate report for replay phrase. num of sqlid %d.\n", len(sqlID2Fingerprint))
+
 	if rowCount > 0 {
 
-		header := []string{"sqlid", "sqltype"}
+		header := []string{"sqlid", "fingerprint", "sqltype"}
 		for i := 0; i < len(dbs); i++ {
 			prefix := fmt.Sprintf("conn_%d_", i)
 			subHeaders := []string{prefix + "min(ms)", prefix + "min-sql",
@@ -385,8 +415,14 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			panic(err)
 		}
 
-		for k, dbsToStats := range queryID2RelayStats {
-			row := []string{k, dbsToStats[0][0].sqltype}
+		for sqlid, dbsToStats := range queryID2RelayStats {
+
+			//in some cases, failed to execute sql
+			//dbsToStats[0] may be nil,skip this
+			if dbsToStats[0] == nil {
+				continue
+			}
+			row := []string{sqlid, sqlID2Fingerprint[sqlid], dbsToStats[0][0].sqltype}
 			for i := 0; i < len(dbsToStats); i++ {
 				srMin, sr99, srMax, count, avg := analyzer(dbsToStats[i])
 				row = append(row, []string{
@@ -404,8 +440,6 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 		}
 	}
 
-	elapsed := time.Since(begin).Seconds()
-	logger.Printf("sql replay finish ,num of raw sql %d,time elasped %fs\n", rowCount, elapsed)
 	logger.Printf("save replay result to %s\n", statsOutFile)
 
 }
@@ -450,7 +484,7 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 	writer := csv.NewWriter(reportFile)
 	defer writer.Flush()
 
-	header := []string{"sqlid", "sqltype"}
+	header := []string{"sqlid", "fingerprint", "sqltype"}
 	subHeaders := []string{"min(ms)", "min-sql",
 		"p99(ms)", "p99-sql",
 		"max(ms)", "max-sql",
@@ -462,8 +496,8 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 		panic(err)
 	}
 
-	for k, sqls := range sqlID2sql {
-		row := []string{k, sqls[0].sqltype}
+	for sqlID, sqls := range sqlID2sql {
+		row := []string{sqlID, sqlID2Fingerprint[sqlID], sqls[0].sqltype}
 		srMin, sr99, srMax, count, avg := analyzer(sqls)
 		row = append(row, []string{
 			strconv.FormatUint(srMin.time, 10), srMin.sql,

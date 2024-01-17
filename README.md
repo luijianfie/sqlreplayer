@@ -12,9 +12,9 @@ analyze部分支持 mysql 5.6,5.7,8.0下的general log，slow log
 
 # 三种模式
 
-analyze：采集日志的raw sql，也可以对这部分raw sql按照sqlid进行聚合，给出建议统计报告
-replay：将指定的raw sql在多个数据源上回放，给出在多个数据源执行结果比对
-both：analyze和的replay的结合
+analyze：采集日志的raw sql，也可以对这部分raw sql按照sqlid进行聚合，给出建议统计报告  
+replay：将指定的raw sql在多个数据源上回放，给出在多个数据源执行结果比对  
+both：analyze和replay的结合  
 
 
 ## analyze 
@@ -40,8 +40,6 @@ analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取ra
 [analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_analyze_report.csv  
 
 ## replay 
-
-1）sql回放
 
 replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和ip2:port2两个数据源上进行回放，以此来比较性能差异
 
