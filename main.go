@@ -405,6 +405,10 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 		for i := 0; i < len(dbs); i++ {
 			prefix := fmt.Sprintf("conn_%d_", i)
 			subHeaders := []string{prefix + "min(ms)", prefix + "min-sql",
+				prefix + "p25(ms)", prefix + "p25-sql",
+				prefix + "p50(ms)", prefix + "p50-sql",
+				prefix + "p75(ms)", prefix + "p75-sql",
+				prefix + "p90(ms)", prefix + "p90-sql",
 				prefix + "p99(ms)", prefix + "p99-sql",
 				prefix + "max(ms)", prefix + "max-sql",
 				prefix + "avg(ms)", prefix + "execution"}
@@ -424,9 +428,13 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 			row := []string{sqlid, sqlID2Fingerprint[sqlid], dbsToStats[0][0].sqltype}
 			for i := 0; i < len(dbsToStats); i++ {
-				srMin, sr99, srMax, count, avg := analyzer(dbsToStats[i])
+				srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg := analyzer(dbsToStats[i])
 				row = append(row, []string{
 					strconv.FormatUint(srMin.time, 10), srMin.sql,
+					strconv.FormatUint(sr25.time, 10), sr25.sql,
+					strconv.FormatUint(sr50.time, 10), sr50.sql,
+					strconv.FormatUint(sr75.time, 10), sr75.sql,
+					strconv.FormatUint(sr90.time, 10), sr90.sql,
 					strconv.FormatUint(sr99.time, 10), sr99.sql,
 					strconv.FormatUint(srMax.time, 10), srMax.sql,
 					strconv.FormatFloat(avg, 'f', 2, 64), strconv.FormatUint(count, 10)}...)
@@ -448,7 +456,7 @@ func chanExit(c chan struct{}) {
 	<-c
 }
 
-func analyzer(arr []sqlReplay) (min, percentile, max sqlReplay, count uint64, average float64) {
+func analyzer(arr []sqlReplay) (min, p25, p50, p75, p90, p99, max sqlReplay, count uint64, average float64) {
 
 	if len(arr) < 1 {
 		return
@@ -458,8 +466,20 @@ func analyzer(arr []sqlReplay) (min, percentile, max sqlReplay, count uint64, av
 		return arr[i].time < arr[j].time
 	})
 
-	index := int(float64(len(arr)-1) * 0.99)
-	percentile = arr[index]
+	index := int(float64(len(arr)-1) * 0.25)
+	p25 = arr[index]
+
+	index = int(float64(len(arr)-1) * 0.50)
+	p50 = arr[index]
+
+	index = int(float64(len(arr)-1) * 0.75)
+	p75 = arr[index]
+
+	index = int(float64(len(arr)-1) * 0.90)
+	p90 = arr[index]
+
+	index = int(float64(len(arr)-1) * 0.99)
+	p99 = arr[index]
 
 	min = arr[0]
 	max = arr[len(arr)-1]
@@ -486,6 +506,10 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 
 	header := []string{"sqlid", "fingerprint", "sqltype"}
 	subHeaders := []string{"min(ms)", "min-sql",
+		"p25(ms)", "p25-sql",
+		"p50(ms)", "p50-sql",
+		"p75(ms)", "p75-sql",
+		"p90(ms)", "p90-sql",
 		"p99(ms)", "p99-sql",
 		"max(ms)", "max-sql",
 		"avg(ms)", "execution"}
@@ -498,9 +522,13 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 
 	for sqlID, sqls := range sqlID2sql {
 		row := []string{sqlID, sqlID2Fingerprint[sqlID], sqls[0].sqltype}
-		srMin, sr99, srMax, count, avg := analyzer(sqls)
+		srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg := analyzer(sqls)
 		row = append(row, []string{
 			strconv.FormatUint(srMin.time, 10), srMin.sql,
+			strconv.FormatUint(sr25.time, 10), sr25.sql,
+			strconv.FormatUint(sr50.time, 10), sr50.sql,
+			strconv.FormatUint(sr75.time, 10), sr75.sql,
+			strconv.FormatUint(sr90.time, 10), sr90.sql,
 			strconv.FormatUint(sr99.time, 10), sr99.sql,
 			strconv.FormatUint(srMax.time, 10), srMax.sql,
 			strconv.FormatFloat(avg, 'f', 2, 64), strconv.FormatUint(count, 10)}...)
