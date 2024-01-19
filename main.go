@@ -34,6 +34,7 @@ var (
 	isSelectOnly         bool
 	ifGenerateReport     bool
 	ifSaveRawSQLInReport bool
+	ifDrawPic            bool
 	RawSQLCSVPath        string
 	CurrentTimeStr       string = time.Now().Format("20060102_150405")
 
@@ -67,6 +68,7 @@ func main() {
 	flag.BoolVar(&isSelectOnly, "select-only", false, "replay select statement only")
 	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
 	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
+	flag.BoolVar(&ifDrawPic, "draw-pic", false, "draw elasped picture for each sqlid")
 	flag.Parse()
 
 	if flagParseNotValid() {
@@ -428,7 +430,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 			row := []string{sqlid, sqlID2Fingerprint[sqlid], dbsToStats[0][0].sqltype}
 			for i := 0; i < len(dbsToStats); i++ {
-				srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg := analyzer(dbsToStats[i])
+				srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg, seq := analyzer(dbsToStats[i])
 				row = append(row, []string{
 					strconv.FormatUint(srMin.time, 10), srMin.sql,
 					strconv.FormatUint(sr25.time, 10), sr25.sql,
@@ -438,6 +440,12 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 					strconv.FormatUint(sr99.time, 10), sr99.sql,
 					strconv.FormatUint(srMax.time, 10), srMax.sql,
 					strconv.FormatFloat(avg, 'f', 2, 64), strconv.FormatUint(count, 10)}...)
+
+				if ifDrawPic {
+					fname := CurrentTimeStr + "_Conn" + strconv.Itoa(i) + "_" + sqlid
+					utils.Draw(fname, seq)
+					logger.Printf("draw picture for sqlid:" + sqlid + " to " + fname + ".png.\n")
+				}
 
 			}
 			err = writer.Write(row)
@@ -456,10 +464,17 @@ func chanExit(c chan struct{}) {
 	<-c
 }
 
-func analyzer(arr []sqlReplay) (min, p25, p50, p75, p90, p99, max sqlReplay, count uint64, average float64) {
+func analyzer(arr []sqlReplay) (min, p25, p50, p75, p90, p99, max sqlReplay, count uint64, average float64, seqs []uint64) {
 
 	if len(arr) < 1 {
 		return
+	}
+	seqs = make([]uint64, len(arr))
+
+	sum := uint64(0)
+	for i, sr := range arr {
+		sum += sr.time
+		seqs[i] = sr.time
 	}
 
 	sort.Slice(arr, func(i, j int) bool {
@@ -484,10 +499,6 @@ func analyzer(arr []sqlReplay) (min, p25, p50, p75, p90, p99, max sqlReplay, cou
 	min = arr[0]
 	max = arr[len(arr)-1]
 
-	sum := uint64(0)
-	for _, sr := range arr {
-		sum += sr.time
-	}
 	average = float64(sum) / float64(len(arr))
 	count = uint64(len(arr))
 	return
@@ -522,7 +533,7 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 
 	for sqlID, sqls := range sqlID2sql {
 		row := []string{sqlID, sqlID2Fingerprint[sqlID], sqls[0].sqltype}
-		srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg := analyzer(sqls)
+		srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg, _ := analyzer(sqls)
 		row = append(row, []string{
 			strconv.FormatUint(srMin.time, 10), srMin.sql,
 			strconv.FormatUint(sr25.time, 10), sr25.sql,
