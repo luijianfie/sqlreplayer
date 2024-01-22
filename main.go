@@ -35,6 +35,7 @@ var (
 	ifGenerateReport     bool
 	ifSaveRawSQLInReport bool
 	ifDrawPic            bool
+	ifDryRun             bool
 	RawSQLCSVPath        string
 	CurrentTimeStr       string = time.Now().Format("20060102_150405")
 	FileDir              string
@@ -70,6 +71,8 @@ func main() {
 	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
 	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
 	flag.BoolVar(&ifDrawPic, "draw-pic", false, "draw elasped picture for each sqlid")
+	flag.BoolVar(&ifDryRun, "dry-run", false, "replay raw sql without collecting any extra info")
+
 	flag.Parse()
 
 	if flagParseNotValid() {
@@ -351,17 +354,20 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 
 		wg.Add(1)
 		rowCount++
-		_, ok := sqlID2Fingerprint[sqlid]
-		if !ok {
-			sqlID2Fingerprint[sqlid] = fingerprint
-		}
 
-		mu.Lock()
-		_, ok = queryID2RelayStats[sqlid]
-		if !ok {
-			queryID2RelayStats[sqlid] = make([][]sqlReplay, len(dbs))
+		if !ifDryRun {
+			_, ok := sqlID2Fingerprint[sqlid]
+			if !ok {
+				sqlID2Fingerprint[sqlid] = fingerprint
+			}
+
+			mu.Lock()
+			_, ok = queryID2RelayStats[sqlid]
+			if !ok {
+				queryID2RelayStats[sqlid] = make([][]sqlReplay, len(dbs))
+			}
+			mu.Unlock()
 		}
-		mu.Unlock()
 
 		ch <- struct{}{}
 
@@ -377,6 +383,10 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 					start := time.Now()
 
 					_, err := db.Exec(sql)
+
+					if ifDryRun {
+						continue
+					}
 
 					if err != nil {
 						logger.Printf("error for sql:%s,error:%s\n", sql, err.Error())
@@ -408,9 +418,9 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 	elapsed := time.Since(begin).Seconds()
 	logger.Printf("sql replay finish ,num of raw sql %d,time elasped %fs.\n", rowCount, elapsed)
 
-	logger.Printf("begin to generate report for replay phrase. num of sqlid %d.\n", len(sqlID2Fingerprint))
+	if rowCount > 0 && !ifDryRun {
 
-	if rowCount > 0 {
+		logger.Printf("begin to generate report for replay phrase. num of sqlid %d.\n", len(sqlID2Fingerprint))
 
 		header := []string{"sqlid", "fingerprint", "sqltype"}
 		for i := 0; i < len(dbs); i++ {
@@ -452,7 +462,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 
 				if ifDrawPic {
 					fname := CurrentTimeStr + "_Conn" + strconv.Itoa(i) + "_" + sqlid
-					utils.Draw(fname, CurrentTimeStr+"/"+fname, seqs)
+					utils.Draw(fname, CurrentTimeStr+"/"+fname, seqs, float64(sr25.time), float64(sr50.time), float64(sr75.time), float64(sr90.time))
 					logger.Printf("draw picture for sqlid:" + sqlid + " to " + FileDir + "/" + fname + ".png.\n")
 
 				}
@@ -464,9 +474,10 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 
 		}
-	}
+		logger.Printf("save replay result to %s\n", statsOutFile)
 
-	logger.Printf("save replay result to %s\n", statsOutFile)
+	}
+	logger.Println("replay finish.")
 
 }
 
