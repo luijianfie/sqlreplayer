@@ -37,6 +37,7 @@ var (
 	ifDrawPic            bool
 	RawSQLCSVPath        string
 	CurrentTimeStr       string = time.Now().Format("20060102_150405")
+	FileDir              string
 
 	sqlID2Fingerprint map[string]string = make(map[string]string)
 
@@ -95,6 +96,14 @@ func main() {
 	}
 	defer file.Close()
 
+	FileDir = CurrentTimeStr
+
+	err = os.Mkdir(FileDir, os.ModePerm)
+	if err != nil {
+		logger.Println("无法创建目录:", err)
+		return
+	}
+
 	switch execType {
 	case "analyze":
 	case "replay", "both":
@@ -131,7 +140,7 @@ func main() {
 		sqlID2RawSQL := make(map[string][]sqlReplay)
 
 		logger.Printf("begin to read %s %s\n", logType, fileName)
-		RawSQLCSVPath = CurrentTimeStr + "_rawsql.csv"
+		RawSQLCSVPath = FileDir + "/" + CurrentTimeStr + "_rawsql.csv"
 		switch logType {
 
 		case "genlog":
@@ -268,7 +277,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 	reader.LazyQuotes = true
 
 	//create file to save stats info
-	statsOutFile := CurrentTimeStr + "_replay_stats.csv"
+	statsOutFile := FileDir + "/" + CurrentTimeStr + "_replay_stats.csv"
 	statsFile, err := os.Create(statsOutFile)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -430,7 +439,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 			row := []string{sqlid, sqlID2Fingerprint[sqlid], dbsToStats[0][0].sqltype}
 			for i := 0; i < len(dbsToStats); i++ {
-				srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg, seq := analyzer(dbsToStats[i])
+				srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg, seqs := analyzer(dbsToStats[i])
 				row = append(row, []string{
 					strconv.FormatUint(srMin.time, 10), srMin.sql,
 					strconv.FormatUint(sr25.time, 10), sr25.sql,
@@ -443,8 +452,9 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 
 				if ifDrawPic {
 					fname := CurrentTimeStr + "_Conn" + strconv.Itoa(i) + "_" + sqlid
-					utils.Draw(fname, seq)
-					logger.Printf("draw picture for sqlid:" + sqlid + " to " + fname + ".png.\n")
+					utils.Draw(fname, CurrentTimeStr+"/"+fname, seqs)
+					logger.Printf("draw picture for sqlid:" + sqlid + " to " + FileDir + "/" + fname + ".png.\n")
+
 				}
 
 			}
@@ -506,7 +516,7 @@ func analyzer(arr []sqlReplay) (min, p25, p50, p75, p90, p99, max sqlReplay, cou
 
 func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 
-	analyzeReportFile := CurrentTimeStr + "_analyze_report.csv"
+	analyzeReportFile := FileDir + "/" + CurrentTimeStr + "_analyze_report.csv"
 	reportFile, err := os.Create(analyzeReportFile)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -548,5 +558,5 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 			panic(err)
 		}
 	}
-	logger.Printf("raw sql save to %s\n", analyzeReportFile)
+	logger.Printf("raw sql report save to %s\n", analyzeReportFile)
 }

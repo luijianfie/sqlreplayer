@@ -10,7 +10,7 @@ import (
 	"gonum.org/v1/plot/vg/draw"
 )
 
-func Draw(title string, seqs []uint64) {
+func Draw(title, filePath string, seqs []uint64) {
 	p := plot.New()
 
 	p.Title.Text = title
@@ -34,7 +34,7 @@ func Draw(title string, seqs []uint64) {
 
 	p.Add(s)
 
-	if err := p.Save(16*vg.Inch, 16*vg.Inch, title+".png"); err != nil {
+	if err := p.Save(16*vg.Inch, 9*vg.Inch, filePath+".png"); err != nil {
 		log.Fatalf("Cannot save: %s", err)
 	}
 }
