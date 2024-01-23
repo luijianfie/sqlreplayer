@@ -78,3 +78,79 @@ replay相关的其他参数
 ## both
 
 both模式是analyze和replay阶段结合，从日志采集到raw sql之后直接在配置的数据源下进行回放。
+
+
+# 参数说明
+
+  执行类型
+  -exec string  
+        exec type [analyze|replay|both]  
+        analyze:generate raw sql from log file.  
+        replay:replay raw sql in connections.  
+
+## analyze
+
+分析日志时候加入时间条件  
+  -begin string  
+        filter sql according to specified begin time from log,format 2023-01-01 13:01:01 (default "0000-01-01 00:00:00")  
+  -end string  
+        filter sql according to specified end time from log,format 2023-01-01 13:01:01 (default "9999-12-31 23:59:59")  
+
+分析日志路径  
+  -f string  
+        filename  
+
+日志格式  
+  -logtype string  
+        log type [genlog|slowlog|csv]  
+
+生成raw sql的报告，按照sqlid进行汇总，主要是针对slowlog带有运行时间的日志格式，其他格式只能进行汇总，统计次数  
+  -generate-report  
+        generate report for analyze phrase  
+
+生成报告是否保存raw sql信息，可以输出各个分位值的raw sql，对于raw sql数据量很大，打开这个选项会导致内存占用过多  
+  -save-raw-sql  
+        save raw sql in report  
+
+
+
+
+
+## replay
+连接charset  
+ -charset string  
+        charset of connection (default "utf8mb4")  
+
+数据库连接  
+ -conn string  
+        mysql connection string,support multiple connections seperated by ',' which can be used for comparation,format   user1:passwd1:ip1:port1:db1[,user2:passwd2:ip2:port2:db2]  
+
+回放文件  
+  -f string  
+        filename  
+
+回放倍数  
+  -m int  
+        number of times a raw sql to be executed while replaying (default 1)  
+
+只回访查询语句  
+  -select-only  
+        replay select statement only  
+
+并发数  
+  -threads int  
+        thread num while replaying (default 1)  
+
+replay报告是否保存raw sql信息，可以输出各个分位值的raw sql，对于raw sql数据量很大，打开这个选项会导致内存占用过多
+  -save-raw-sql  
+        save raw sql in report  
+
+按照sqlid绘制raw sql响应时间散点图  
+  -draw-pic  
+        draw elasped picture for each sqlid  
+
+![散点图实例](example/20240123_181642_Conn0_CA6E6CCC68F8018C.png)
+
+回放阶段不统计信息
+  -dry-run  
+        replay raw sql without collecting any extra info  

@@ -84,3 +84,53 @@ other parameters
 ## both
 
 "both" combines the analyze and replay stages, directly replaying raw SQL statements collected from logs under the configured data source after the collection process.
+
+
+
+# parameters introduction
+
+  -exec string  
+        exec type [analyze|replay|both]
+        analyze:generate raw sql from log file.
+        replay:replay raw sql in connections.
+
+## analyze
+
+  -begin string  
+        filter sql according to specified begin time from log,format 2023-01-01 13:01:01 (default "0000-01-01 00:00:00")
+  -end string  
+        filter sql according to specified end time from log,format 2023-01-01 13:01:01 (default "9999-12-31 23:59:59")
+  -f string  
+        filename
+  -generate-report  
+        generate report for analyze phrase
+  -save-raw-sql  
+        save raw sql in report
+  -logtype string  
+        log type [genlog|slowlog|csv]
+
+
+## replay
+ -charset string  
+        charset of connection (default "utf8mb4")
+
+ -conn string  
+        mysql connection string,support multiple connections seperated by ',' which can be used for comparation,format user1:passwd1:ip1:port1:db1[,user2:passwd2:ip2:port2:db2]
+
+  -f string  
+        filename
+
+  -m int  
+        number of times a raw sql to be executed while replaying (default 1)
+  -select-only  
+        replay select statement only
+  -threads int  
+        thread num while replaying (default 1)
+  -save-raw-sql  
+        save raw sql in report
+  -draw-pic  
+        draw elasped picture for each sqlid
+![scatter graph example](example/20240123_181642_Conn0_CA6E6CCC68F8018C.png)
+
+  -dry-run  
+        replay raw sql without collecting any extra info
