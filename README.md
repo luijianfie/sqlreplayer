@@ -26,14 +26,14 @@ both：analyze和replay的结合
 
 analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取raw sql，并以csv格式的文件输出
 
-> ./sqlReplayer -exec analyze -f test_general_1.log -logtype genlog  
+> ./sqlreplayer -exec analyze -f test_general_1.log -logtype genlog  
 [analyze]2023/12/28 17:20:50 begin to read genlog test_general_1.log  
 [analyze]2023/12/28 17:20:50 finish reading genlog test_general_1.log  
 [analyze]2023/12/28 17:20:50 raw sql save to 20231228_172050_rawsql.csv  
 
 抓取原始sql的时候，可以增加一些条件来筛选sql，如下面的命令能够抓取10点到10点半之间的慢查询
 
->./sqlReplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00"
+>./sqlreplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00"
 
 
 分析原始sql的时候，对sql分布按照sqlid进行简单统计
@@ -48,7 +48,7 @@ analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取ra
 
 replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和ip2:port2两个数据源上进行回放，以此来比较性能差异
 
->./sqlReplayer -exec replay -f test.csv -conn  'user1:passwd1:ip1:port1:db1,user2:passwd2:ip2:port2:db2'  
+>./sqlreplayer -exec replay -f test.csv -conn  'user1:passwd1:ip1:port1:db1,user2:passwd2:ip2:port2:db2'  
 [init]2023/12/28 16:57:02 conn 0 [user1:passwd1:ip1:port1:db1]  
 [init]2023/12/28 16:57:02 conn 1 [user2:passwd2:ip2:port2:db2]  
 [replay]2023/12/28 16:57:08 reach the end of log file.  
