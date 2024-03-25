@@ -10,6 +10,11 @@ analyze部分支持 mysql 5.6,5.7,8.0下的general log，slow log
 这个工具使用的初衷是需要比较业务sql在多个数据库下的性能差异，并生成简单比对结果。
 主要涉及到两个部分，一个是sql采集，工具支持从mysql的全量日志、慢日志、csv文件进行raw sql的采集，汇总。另一个sql回放，sql回放支持在多个数据源对raw sql进行回放，并得到比对结果。
 
+# 安装
+
+sqlreplayer目录下:
+go build 
+
 # 三种模式
 
 analyze：采集日志的raw sql，也可以对这部分raw sql按照sqlid进行聚合，给出建议统计报告  

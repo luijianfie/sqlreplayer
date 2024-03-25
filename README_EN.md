@@ -12,6 +12,9 @@ analyze part support general log,slow log in mysql 5.6,5.7,8.0
 The initial intention of using this tool is to compare the performance differences of SQL under multiple databases, and generate simple comparison results. 
 It mainly involves two parts. One is SQL collection, the tool supports collecting raw SQL from MySQL's full logs, slow logs, and CSV files for aggregation. The other is SQL replay, SQL replay supports replaying raw SQL on multiple data sources and obtaining comparison results.
 
+# install
+
+Execute 'go build' in sqlreplayer
 
 # mode
 
