@@ -27,9 +27,9 @@ var (
 			`Tcp port: \d+  Unix socket: \S+.*`,
 			`Time                 Id Command    Argument.*`,
 		}, "|") + `)$`)
-	reMySQL56 *regexp.Regexp = regexp.MustCompile(`(?s)^(\d{6}\s+\d{1,2}:\d{2}:\d{2}|\t)\s+(\d+)\s+([^\t]+)\t(.*)`)
+	reGenlog56 *regexp.Regexp = regexp.MustCompile(`(?s)^(\d{6}\s+\d{1,2}:\d{2}:\d{2}|\t)\s+(\d+)\s+([^\t]+)\t(.*)`)
 
-	reMySQL57 *regexp.Regexp = regexp.MustCompile(`(?s)^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{6}\+\d{2}:\d{2}\t(\d+)\s+([^\t]+)\t(.*)`)
+	reGenlog57 *regexp.Regexp = regexp.MustCompile(`(?s)^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{6}\+\d{2}:\d{2}\s+(\d+)\s+([^\t]+)\t(.*)`)
 
 	slowlogReIgnore *regexp.Regexp = regexp.MustCompile(
 		`^(?s)(?:` + strings.Join([]string{
@@ -83,11 +83,11 @@ func (g *GeneralLogParser) Parser(fd io.Reader, handler func(cu *CommandUnit)) e
 		}
 
 		if re == nil {
-			if reMySQL56.MatchString(line) {
-				re = reMySQL56
+			if reGenlog56.MatchString(line) {
+				re = reGenlog56
 
-			} else if reMySQL57.MatchString(line) {
-				re = reMySQL57
+			} else if reGenlog57.MatchString(line) {
+				re = reGenlog57
 			} else {
 				continue
 			}
@@ -96,7 +96,7 @@ func (g *GeneralLogParser) Parser(fd io.Reader, handler func(cu *CommandUnit)) e
 		if m := re.FindStringSubmatch(line); m != nil {
 
 			// mysql5.6 don't save current time for each sql but only keep one timestamp every second
-			if re == reMySQL56 {
+			if re == reGenlog56 {
 				if m[1] != "\t" {
 					currentTime, err = time.Parse("20060102 15:04:05", yearPrefix+m[1])
 
