@@ -36,13 +36,21 @@ analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取ra
 >./sqlreplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00"
 
 
-分析原始sql的时候，对sql分布按照sqlid进行简单统计
+分析原始sql的时候，指定-generate-report，对sql分布按照sqlid进行简单统计
 
 >./sqlreplayer -exec analyze -f slow.log -logtype slowlog -generate-report  
 [analyze]2024/01/15 11:03:26 begin to read slowlog slow.log  
 [analyze]2024/01/15 11:03:26 finish reading slowlog slow.log  
 [analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_rawsql.csv  
 [analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_analyze_report.csv  
+
+
+20240115_110326_rawsql.csv保存了日志当中原始sql，执行时间，消耗时间。20240115_110326_analyze_report.csv则是对sql按照指纹化之后进行简要的统计和分析结果。下面是20240115_110326_analyze_report.csv内容截图。
+
+![analyze统计结果](example/analyze_report.png)
+
+>上图按照A列sqlid，是对sql模板化之后标识，B列是模板化后的sql,D列是这类型SQL最小执行秒数，E列是最小执行秒数对应的带有具体参数的原始SQL（需要打开-save-raw-sql参数，但是会占用较大内存，与日志执行SQL总量有关）。F-O列，p25,p50,p75,p99代表的是分位值。以红框内这行记录为例，04BDF42927323356这条sql执行次数为335次，其中99%的耗时均小于2ms。
+
 
 ## replay 
 
@@ -55,7 +63,7 @@ replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和
 [replay]2023/12/28 16:57:14 sql replay finish ,num of raw sql 3,time elasped 12.573019s  
 [replay]2023/12/28 16:57:14 save replay result to 20231228_173023_replay_stats.csv
 
-下面是test.csv文件的内容。这个文件内容可以通过analyze阶段进行生成，也可以通过手动来维护需要进行回放的sql。
+下面是test.csv文件的内容。这个文件内容可以通过analyze阶段进行生成，也可以通过手动来维护需要进行回放的sql
 >"select 1,sleep(1)"  
 "select 2,sleep(2)"  
 "select 3,sleep(3)"  
@@ -71,6 +79,10 @@ replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和
 |------------------|---------|----------------|----------------|----------------|----------------|----------------|----------------|----------------|------------------|----------------|----------------|----------------|----------------|----------------|----------------|----------------|------------------|
 | 16219655761820A2 |         | 44             | select 1       | 44             | select 2       | 45             | select 3       | 44.33          | 3                | 44             | select 2       | 44             | select 3       | 45             | select 1       | 44.33          | 3                |
 | EE3DCDA8BEC5E966 |         | 1189           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3047           | select 3,sleep(3) | 2094.00        | 3                | 1186           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3048           | select 3,sleep(3) | 2093.33        | 3                |
+
+
+>回放显示结果和分析阶段生成的analyze_report相似。第一行为SQLID为16219655761820A2在各个数据源上的执行结果。 conn_0_execution表示该类型的SQL在conn0上执行了3次，conn_0_p99(ms)表示在conn0上99%的执行结果时间是小于等于44ms的，99分位值对应的sql为select 1。可以直观比较sql在各个数据源上的执行结果。
+
 
 replay相关的其他参数
 

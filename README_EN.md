@@ -44,6 +44,14 @@ When analyzing the original SQL, simple statistics are conducted according to th
 [analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_rawsql.csv  
 [analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_analyze_report.csv  
 
+"20240115_110326_rawsql.csv" saves info from log, including original sql,elapsed time.
+"20240115_110326_analyze_report.csv" is a brief statistics of sql log by templating the sql. Below is a screenshot of "20240115_110326_analyze_report.csv".
+
+![analyze result](example/analyze_report.png)
+
+>Col A is sqlid,identification of the sql after templating. B is sql alfter templating. D is minimum elasped time. E is the raw sql that takes the least amount of time. (in order to show the raw sql,you need set -save-raw-sql parameter, but it will take up more memory, depending on the total amount of SQL executed by the logs)。From F to O,p25,p50,p75,p99 represent the execution time quantiles of the SQL template. Task 04BDF42927323356 as an example, it  was executed 335 times, with 99% of the executions taking less than 2 milliseconds.
+
+
 
 ## replay 
 
@@ -75,6 +83,10 @@ sql will be grouped according to sqlid, and you can have a glance of sql's perfo
 |------------------|---------|----------------|----------------|----------------|----------------|----------------|----------------|----------------|------------------|----------------|----------------|----------------|----------------|----------------|----------------|----------------|------------------|
 | 16219655761820A2 |         | 44             | select 1       | 44             | select 2       | 45             | select 3       | 44.33          | 3                | 44             | select 2       | 44             | select 3       | 45             | select 1       | 44.33          | 3                |
 | EE3DCDA8BEC5E966 |         | 1189           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3047           | select 3,sleep(3) | 2094.00        | 3                | 1186           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3048           | select 3,sleep(3) | 2093.33        | 3                |
+
+
+>The above is similar to those generated in the analysis phase's analyze_report. The first row represents the execution results of SQLID 16219655761820A2 across various data sources. "conn_0_execution" indicates that this type of SQL was executed 3 times on conn0, and "conn_0_p99(ms)" indicates that 99% of the execution times on conn0 were less than or equal to 44 milliseconds. The SQL corresponding to the 99th percentile is "select 1". This allows for an intuitive comparison of the SQL execution results across different data sources.
+
 
 
 other parameters
