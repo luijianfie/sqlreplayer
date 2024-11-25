@@ -339,12 +339,13 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 		if isSelectOnly {
 			rets, err := utils.IsSelectStatement(sql)
 
-			if err != nil || len(rets) == 0 {
+			if err != nil {
 				logger.Printf("failed to parse sql [%s],err [%s]. skip it.", sql, err.Error())
 				continue
 			}
+
 			//not select statement,skip it
-			if !rets[0] {
+			if len(rets) == 0 || !rets[0] {
 				continue
 			}
 		}
