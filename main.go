@@ -390,7 +390,8 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 					}
 
 					if err != nil {
-						logger.Printf("error for sql:%s,error:%s\n", sql, err.Error())
+						logger.Printf("error while executing sql\n sql:%s,%s\nerror:%s\n", sqlid, sql, err.Error())
+
 						continue
 					}
 
