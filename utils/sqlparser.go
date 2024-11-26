@@ -1,6 +1,10 @@
 package utils
 
 import (
+	"sort"
+	"strings"
+
+	"github.com/percona/go-mysql/query"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
@@ -88,7 +92,6 @@ func SQLParser(sql string) (rets []ParserResult, err error) {
 
 }
 
-
 func IsSelectStatement(sql string) (rets []bool, err error) {
 	p := parser.New()
 
@@ -96,8 +99,6 @@ func IsSelectStatement(sql string) (rets []bool, err error) {
 	if err != nil {
 		return nil, err
 	}
-
-	
 
 	for _, stmtNode := range stmtNodes {
 		pr := ParserResult{}
@@ -107,11 +108,60 @@ func IsSelectStatement(sql string) (rets []bool, err error) {
 		switch stmtNode.(type) {
 
 		case *ast.SelectStmt:
-			rets=append(rets, true)
+			rets = append(rets, true)
 		default:
-			rets=append(rets, false)
+			rets = append(rets, false)
 		}
 	}
 
-	return rets,nil 
+	return rets, nil
+}
+
+type tableNameExtractor struct {
+	tableNames map[string]struct{}
+}
+
+func (e *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+	switch node := in.(type) {
+	case *ast.TableName:
+		e.tableNames[node.Name.L] = struct{}{}
+	case *ast.TableSource:
+		if tbl, ok := node.Source.(*ast.TableName); ok {
+			e.tableNames[tbl.Name.L] = struct{}{}
+		}
+	}
+	return in, false
+}
+
+func (e *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+func ExtractTableNames(sql string) (string, error) {
+	p := parser.New()
+	stmtNodes, _, err := p.Parse(sql, "", "")
+	if err != nil {
+		return "", err
+	}
+
+	extractor := &tableNameExtractor{tableNames: make(map[string]struct{})}
+	for _, stmtNode := range stmtNodes {
+		stmtNode.Accept(extractor)
+	}
+
+	uniqueTableNames := make([]string, 0, len(extractor.tableNames))
+	for name := range extractor.tableNames {
+		uniqueTableNames = append(uniqueTableNames, name)
+	}
+
+	sort.Strings(uniqueTableNames)
+
+	return strings.Join(uniqueTableNames, ","), nil
+}
+
+// GetQueryID returns a fingerprint and queryid of the given SQL statement.
+func GetQueryID(sql string) (queryid string, fingerprint string) {
+	fingerprint = query.Fingerprint(sql)
+	queryid = query.Id(fingerprint)
+	return queryid, fingerprint
 }

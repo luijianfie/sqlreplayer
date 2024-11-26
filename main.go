@@ -39,6 +39,7 @@ var (
 	RawSQLCSVPath        string
 	CurrentTimeStr       string = time.Now().Format("20060102_150405")
 	FileDir              string
+	verbose              bool
 
 	sqlID2Fingerprint map[string]string = make(map[string]string)
 
@@ -50,11 +51,14 @@ var (
 )
 
 type sqlReplay struct {
-	sqlid   string
-	sqltype string
-	sql     string
-	time    uint64
+	sqlid     string
+	tablelist string
+	sqltype   string
+	sql       string
+	time      uint64
 }
+
+const version = "1.0.0"
 
 func main() {
 
@@ -72,8 +76,14 @@ func main() {
 	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
 	flag.BoolVar(&ifDrawPic, "draw-pic", false, "draw elasped picture for each sqlid")
 	flag.BoolVar(&ifDryRun, "dry-run", false, "replay raw sql without collecting any extra info")
+	flag.BoolVar(&verbose, "v", false, "display version information")
 
 	flag.Parse()
+
+	if verbose {
+		fmt.Printf("sqlreplayer version: %s\n", version)
+		os.Exit(0)
+	}
 
 	if flagParseNotValid() {
 		return
@@ -170,7 +180,8 @@ func main() {
 			}
 
 			//generate query id
-			cu.QueryID, fingerprint = GetQueryID(cu.Argument)
+			cu.QueryID, fingerprint = utils.GetQueryID(cu.Argument)
+			cu.TableList, _ = utils.ExtractTableNames(cu.Argument)
 
 			_, ok := sqlID2Fingerprint[cu.QueryID]
 			if !ok {
@@ -178,13 +189,13 @@ func main() {
 			}
 
 			//save to raw sql file
-			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
+			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, cu.TableList, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
 			if err != nil {
 				panic(err)
 			}
 
 			if ifGenerateReport {
-				sr := sqlReplay{sqlid: cu.QueryID, sqltype: cu.CommandType, time: uint64(cu.Elapsed * 1000)}
+				sr := sqlReplay{sqlid: cu.QueryID, tablelist: cu.TableList, sqltype: cu.CommandType, time: uint64(cu.Elapsed * 1000)}
 
 				if ifSaveRawSQLInReport {
 					sr.sql = cu.Argument
@@ -350,8 +361,9 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			}
 		}
 
-		//generate sqlid for sql if empty
-		sqlid, fingerprint = GetQueryID(sql)
+		//generate sqlid,table list for sql
+		sqlid, fingerprint = utils.GetQueryID(sql)
+		tablelist, _ := utils.ExtractTableNames(sql)
 
 		wg.Add(1)
 		rowCount++
@@ -390,7 +402,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 					}
 
 					if err != nil {
-						logger.Printf("error while executing sql\n sql:%s,%s\nerror:%s\n", sqlid, sql, err.Error())
+						logger.Printf("error while executing sql. error:%s. \nsqlid:%s,%s", sqlid, sql, err.Error())
 
 						continue
 					}
@@ -399,6 +411,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 					elapsedMilliseconds := elapsed.Milliseconds()
 
 					sr.time = uint64(elapsedMilliseconds)
+					sr.tablelist = tablelist
 					if ifSaveRawSQLInReport {
 						sr.sql = sql
 					}
@@ -424,7 +437,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 
 		logger.Printf("begin to generate report for replay phrase. num of sqlid %d.\n", len(sqlID2Fingerprint))
 
-		header := []string{"sqlid", "fingerprint", "sqltype"}
+		header := []string{"sqlid", "fingerprint", "sqltype", "tablelist"}
 		for i := 0; i < len(dbs); i++ {
 			prefix := fmt.Sprintf("conn_%d_", i)
 			subHeaders := []string{prefix + "min(ms)", prefix + "min-sql",
@@ -449,7 +462,7 @@ func replayRawSQL(dbs []*sql.DB, filePath string, threads, multiplier int) {
 			if dbsToStats[0] == nil {
 				continue
 			}
-			row := []string{sqlid, sqlID2Fingerprint[sqlid], dbsToStats[0][0].sqltype}
+			row := []string{sqlid, sqlID2Fingerprint[sqlid], dbsToStats[0][0].sqltype, dbsToStats[0][0].tablelist}
 			for i := 0; i < len(dbsToStats); i++ {
 				srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg, seqs := analyzer(dbsToStats[i])
 				row = append(row, []string{
@@ -538,7 +551,7 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 	writer := csv.NewWriter(reportFile)
 	defer writer.Flush()
 
-	header := []string{"sqlid", "fingerprint", "sqltype"}
+	header := []string{"sqlid", "fingerprint", "sqltype", "tablelist"}
 	subHeaders := []string{"min(ms)", "min-sql",
 		"p25(ms)", "p25-sql",
 		"p50(ms)", "p50-sql",
@@ -555,7 +568,7 @@ func generateAnalyzeReport(sqlID2sql map[string][]sqlReplay) {
 	}
 
 	for sqlID, sqls := range sqlID2sql {
-		row := []string{sqlID, sqlID2Fingerprint[sqlID], sqls[0].sqltype}
+		row := []string{sqlID, sqlID2Fingerprint[sqlID], sqls[0].sqltype, sqls[0].tablelist}
 		srMin, sr25, sr50, sr75, sr90, sr99, srMax, count, avg, _ := analyzer(sqls)
 		row = append(row, []string{
 			strconv.FormatUint(srMin.time, 10), srMin.sql,

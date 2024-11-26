@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/percona/go-mysql/query"
+	"github.com/luijianfie/sqlreplayer/utils"
 )
 
 type LogParser interface {
@@ -50,6 +50,7 @@ type CommandUnit struct {
 	Argument    string
 	QueryID     string
 	Elapsed     float64
+	TableList   string
 }
 
 type GeneralLogParser struct {
@@ -257,7 +258,7 @@ func (c *CSVParser) Parser(fd io.Reader, handler func(cu *CommandUnit)) error {
 
 		//if querid has been set, then use it , otherwise generate queryid for it
 		if len(record) < 2 {
-			cmdUnit.QueryID, _ = GetQueryID(record[0])
+			cmdUnit.QueryID, _ = utils.GetQueryID(record[0])
 		} else {
 			cmdUnit.QueryID = record[1]
 		}
@@ -267,11 +268,4 @@ func (c *CSVParser) Parser(fd io.Reader, handler func(cu *CommandUnit)) error {
 	}
 
 	return nil
-}
-
-// GetQueryID returns a fingerprint and queryid of the given SQL statement.
-func GetQueryID(sql string) (queryid string, fingerprint string) {
-	fingerprint = query.Fingerprint(sql)
-	queryid = query.Id(fingerprint)
-	return queryid, fingerprint
 }
