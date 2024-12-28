@@ -1,5 +1,4 @@
 .vscode
 *.csv
 *.log
-go.sum
 sqlreplayer

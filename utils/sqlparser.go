@@ -137,6 +137,7 @@ func (e *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
+// extract tables from a given sql
 func ExtractTableNames(sql string) (string, error) {
 	p := parser.New()
 	stmtNodes, _, err := p.Parse(sql, "", "")
