@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type Connector interface {
@@ -43,7 +45,7 @@ type Mysql struct {
 }
 
 func (m *Mysql) InitConn() *sql.DB {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/", m.User, m.Passwd, m.Ip, m.Port)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", m.User, m.Passwd, m.Ip, m.Port, m.DB)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil

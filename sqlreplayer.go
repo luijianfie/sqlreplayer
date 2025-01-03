@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +36,8 @@ const (
 	STOPPED
 	AFTER_PROCESSING
 	DONE
+	ANALYZE_ERROR
+	REPLAY_ERROR
 	EXIT
 )
 
@@ -48,6 +51,10 @@ func (s Status) String() string {
 		return "stopped"
 	case DONE:
 		return "done"
+	case ANALYZE_ERROR:
+		return "analyze error"
+	case REPLAY_ERROR:
+		return "replay error"
 	default:
 		return "Unknown"
 	}
@@ -164,6 +171,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			QueryID2RelayStats: make(map[string][][]replayUnit),
 			Currency:           c.WorkerNum,
 			Multiplier:         c.Multi,
+			Thread:             c.Thread,
 
 			logger:   c.Logger,
 			stopchan: make(chan struct{}),
@@ -222,7 +230,11 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 				// 0	1		2	  3		4	5
 				// type:user1:passwd1:ip1:port1:db1
 				if len(strs) < 6 {
-					return nil, errors.New(fmt.Sprintf("invalid conn string,conn %d [ip:%s,port:%s,db:%s,user:%s]", idx, strs[3], strs[4], strs[5], strs[1]))
+					if len(strs) == 5 {
+						strs = append(strs, "")
+					} else {
+						return nil, errors.New(fmt.Sprintf("invalid conn string,conn %d [ip:%s,port:%s,db:%s,user:%s]", idx, strs[3], strs[4], strs[5], strs[1]))
+					}
 				}
 				p := connection.Param{
 					User:   strs[1],
@@ -337,6 +349,7 @@ func (sr *SQLReplayer) Start() {
 									if err.Error() == "STOP" {
 										sr.logger.Sugar().Infof("recieve STOP signal,worker %d exit.", index)
 									} else {
+										sr.Status = ANALYZE_ERROR
 										sr.logger.Error(err.Error())
 										return
 									}
@@ -355,6 +368,7 @@ func (sr *SQLReplayer) Start() {
 									if err.Error() == "STOP" {
 										sr.logger.Sugar().Infof("recieve STOP signal,worker %d exit.", index)
 									} else {
+										sr.Status = REPLAY_ERROR
 										sr.logger.Error(err.Error())
 									}
 									return
@@ -379,21 +393,41 @@ func (sr *SQLReplayer) Start() {
 	if sr.Status == STOPPING {
 		sr.Status = STOPPED
 		sr.Save()
-	} else {
+	} else if sr.Status == PROCESSING {
 		sr.Status = DONE
 
 		if sr.GenerateReport {
-			sr.generateRawSQLReport()
+			if sr.ExecMode&model.ANALYZE != 0 {
+				sr.generateRawSQLReport()
+			}
+
+			if sr.ExecMode&model.REPLAY != 0 {
+				generateReplayReport(sr)
+			}
 		}
 
 		sr.logger.Info("task finished.")
+	} else {
+		sr.logger.Sugar().Infof("task failed. %s.", sr.Status)
 	}
 
 	sr.mutex.Unlock()
 
-	sr.Close()
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	// print mem stat
+	sr.logger.Info("Memory statistic ")
+	sr.logger.Info("Allocated Memory: " + strconv.FormatUint(memStats.Alloc/1024, 10) + " KB")
+	sr.logger.Info("Total Allocated Memory: " + strconv.FormatUint(memStats.TotalAlloc/1024, 10) + " KB")
+	sr.logger.Info("Heap Memory: " + strconv.FormatUint(memStats.HeapAlloc/1024, 10) + " KB")
+	sr.logger.Info("Heap Memory System: " + strconv.FormatUint(memStats.HeapSys/1024, 10) + " KB")
+	sr.logger.Info("MaxHeapAlloc: " + strconv.FormatUint(memStats.HeapInuse/1024, 10) + " KB")
 
 	sr.logger.Info("exit.")
+
+	sr.Close()
+
 }
 
 func (sr *SQLReplayer) Save() {
@@ -480,6 +514,9 @@ func (sr *SQLReplayer) analyze(index int) error {
 	csvWriter := csv.NewWriter(rawSQLFile)
 	defer csvWriter.Flush()
 
+	tmpSqlID2Fingerprint := make(map[string]string)
+	tmpSqlID2ReplayUints := make(map[string][]replayUnit)
+
 	//deal with command unit
 	curPos, err := sr.parser.Parser(file, pos, func(cu *model.CommandUnit) error {
 
@@ -502,12 +539,10 @@ func (sr *SQLReplayer) analyze(index int) error {
 		cu.QueryID, fingerprint = utils.GetQueryID(cu.Argument)
 		cu.TableList, _ = utils.ExtractTableNames(cu.Argument)
 
-		sr.mutex.Lock()
-		_, ok := sr.SqlID2Fingerprint[cu.QueryID]
+		_, ok := tmpSqlID2Fingerprint[cu.QueryID]
 		if !ok {
-			sr.SqlID2Fingerprint[cu.QueryID] = fingerprint
+			tmpSqlID2Fingerprint[cu.QueryID] = fingerprint
 		}
-		sr.mutex.Unlock()
 
 		//save to raw sql file
 		err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, cu.TableList, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
@@ -521,10 +556,7 @@ func (sr *SQLReplayer) analyze(index int) error {
 			if sr.SaveRawSQLInReport {
 				ru.Sql = cu.Argument
 			}
-			sr.mutex.Lock()
-			sr.SqlID2ReplayUints[cu.QueryID] = append(sr.SqlID2ReplayUints[cu.QueryID], ru)
-			sr.mutex.Unlock()
-
+			tmpSqlID2ReplayUints[cu.QueryID] = append(tmpSqlID2ReplayUints[cu.QueryID], ru)
 		}
 		return nil
 
@@ -532,9 +564,21 @@ func (sr *SQLReplayer) analyze(index int) error {
 
 	sr.mutex.Lock()
 	sr.ParserFilePos[index] = curPos
+
+	for k, v := range tmpSqlID2Fingerprint {
+		_, ok := tmpSqlID2Fingerprint[k]
+		if !ok {
+			sr.SqlID2Fingerprint[k] = v
+		}
+	}
+	for k, slices := range tmpSqlID2ReplayUints {
+		sr.SqlID2ReplayUints[k] = append(sr.SqlID2ReplayUints[k], slices...)
+	}
+
 	if err == nil {
 		sr.ParserFilStatus[index] = true
 	}
+
 	sr.mutex.Unlock()
 
 	return err
@@ -634,7 +678,7 @@ func (sr *SQLReplayer) replayRawSQL(index int) error {
 	//load raw sql from csv , and locate the postion from metadata
 	sr.mutex.Lock()
 	filePath := sr.ReplayFileList[index]
-	curPos := sr.ParserFilePos[index]
+	curPos := sr.ReplayFilePos[index]
 	sr.mutex.Unlock()
 
 	fd, err := os.Open(filePath)
@@ -668,105 +712,121 @@ func (sr *SQLReplayer) replayRawSQL(index int) error {
 	//only when file read is done will we try to wait for the rest to finish.  and it must be no more sql on the way
 	readFileDone := make(chan struct{}, 1)
 
-	for {
+	//mark status,if status is 1, then it reach EOF. 2 for "STOP" signal.
+	status := 0
+	var e error
 
+	for {
 		select {
 		case <-sr.stopchan:
 			for _, db := range dbs {
 				db.Close()
 			}
-			return errors.New("STOP")
+			status = 2
+			e = errors.New("STOP")
+			break
 		default:
-		}
-		var sqlid, fingerprint string
-		record, err := reader.Read()
-
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				sr.logger.Sugar().Infoln("reach the end of file.")
-				readFileDone <- struct{}{}
-				break
-			} else {
-				sr.logger.Sugar().Infoln("failed to read next record.")
-				return err
-			}
-		}
-
-		//first column for raw sql
-		//second column for sqlid
-		sql := record[0]
-
-		//check if sql is a SELECT statement
-		if sr.QueryOnly {
-			rets, err := utils.IsSelectStatement(sql)
+			var sqlid, fingerprint string
+			record, err := reader.Read()
 
 			if err != nil {
-				sr.logger.Sugar().Infof("failed to parse sql [%s],err [%s]. skip it.", sql, err.Error())
-				continue
+				if errors.Is(err, io.EOF) {
+					sr.logger.Sugar().Infoln("reach the end of file.")
+					status = 1
+					readFileDone <- struct{}{}
+					break
+				} else {
+					sr.logger.Sugar().Infof("failed to read next record,%s", err.Error())
+					//also impossible
+					status = 3
+					e = err
+					readFileDone <- struct{}{}
+					break
+				}
 			}
 
-			//not select statement,skip it
-			if len(rets) == 0 || !rets[0] {
-				continue
-			}
-		}
+			//first column for raw sql
+			//second column for sqlid
+			sql := record[0]
 
-		//generate sqlid,table list for sql
-		sqlid, fingerprint = utils.GetQueryID(sql)
-		tablelist, _ := utils.ExtractTableNames(sql)
+			//check if sql is a SELECT statement
+			if sr.QueryOnly {
+				rets, err := utils.IsSelectStatement(sql)
 
-		wg.Add(1)
-		sr.mutex.Lock()
-		sr.ReplayRowCount++
-
-		_, ok := sr.SqlID2Fingerprint[sqlid]
-		if !ok {
-			sr.SqlID2Fingerprint[sqlid] = fingerprint
-		}
-
-		_, ok = sr.QueryID2RelayStats[sqlid]
-		if !ok {
-			sr.QueryID2RelayStats[sqlid] = make([][]replayUnit, len(sr.Conns))
-		}
-
-		sr.mutex.Unlock()
-
-		ch <- struct{}{}
-
-		go func() {
-			defer chanExit(ch)
-			defer wg.Done()
-			for i := 0; i < sr.Multiplier; i++ {
-
-				for ind, db := range dbs {
-
-					ru := replayUnit{}
-
-					start := time.Now()
-
-					_, err := db.Exec(sql)
-
-					if err != nil {
-						sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", sqlid, sql, err.Error())
-						continue
-					}
-
-					elapsed := time.Since(start)
-					elapsedMilliseconds := elapsed.Milliseconds()
-
-					ru.Time = uint64(elapsedMilliseconds)
-					ru.Tablelist = tablelist
-					if sr.SaveRawSQLInReport {
-						ru.Sql = sql
-					}
-					sr.mutex.Lock()
-					conns2ReplayStats := sr.QueryID2RelayStats[sqlid]
-					conns2ReplayStats[ind] = append(conns2ReplayStats[ind], ru)
-					sr.mutex.Unlock()
+				if err != nil {
+					sr.logger.Sugar().Debugf("failed to parse sql [%s],err [%s]. skip it.", sql, err.Error())
+					continue
 				}
 
+				//not select statement,skip it
+				if len(rets) == 0 || !rets[0] {
+					sr.logger.Sugar().Debugf("not select statement,skip ip. sql:%s", sql)
+					continue
+				}
 			}
-		}()
+
+			//generate sqlid,table list for sql
+			sqlid, fingerprint = utils.GetQueryID(sql)
+			tablelist, _ := utils.ExtractTableNames(sql)
+
+			wg.Add(1)
+			sr.mutex.Lock()
+			sr.ReplayRowCount++
+
+			_, ok := sr.SqlID2Fingerprint[sqlid]
+			if !ok {
+				sr.SqlID2Fingerprint[sqlid] = fingerprint
+			}
+
+			_, ok = sr.QueryID2RelayStats[sqlid]
+			if !ok {
+				sr.QueryID2RelayStats[sqlid] = make([][]replayUnit, len(sr.Conns))
+			}
+
+			sr.mutex.Unlock()
+
+			ch <- struct{}{}
+
+			go func() {
+				defer chanExit(ch)
+				defer wg.Done()
+				for i := 0; i < sr.Multiplier; i++ {
+
+					for ind, db := range dbs {
+
+						ru := replayUnit{}
+
+						start := time.Now()
+
+						_, err := db.Exec(sql)
+
+						if err != nil {
+							sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", sqlid, sql, err.Error())
+							continue
+						}
+
+						elapsed := time.Since(start)
+						elapsedMilliseconds := elapsed.Milliseconds()
+
+						ru.Time = uint64(elapsedMilliseconds)
+						ru.Tablelist = tablelist
+						if sr.SaveRawSQLInReport {
+							ru.Sql = sql
+						}
+						sr.mutex.Lock()
+						conns2ReplayStats := sr.QueryID2RelayStats[sqlid]
+						conns2ReplayStats[ind] = append(conns2ReplayStats[ind], ru)
+						sr.mutex.Unlock()
+					}
+
+				}
+			}()
+
+		}
+
+		if status != 0 {
+			break
+		}
 
 	}
 
@@ -774,8 +834,16 @@ func (sr *SQLReplayer) replayRawSQL(index int) error {
 	wg.Wait()
 
 	elapsed := time.Since(begin).Seconds()
-	sr.logger.Sugar().Infof("sql replay finish for file,time elasped %fs.", sr.ReplayFileList[index], elapsed)
-	return nil
+
+	if status == 1 {
+		sr.logger.Sugar().Infof("sql replay finish for file %s,time elasped %fs.", sr.ReplayFileList[index], elapsed)
+		sr.mutex.Lock()
+		sr.ReplayFileStatus[index] = true
+		sr.mutex.Unlock()
+	} else {
+		sr.logger.Sugar().Infof("file %s replay stop.", sr.ReplayFileList[index], elapsed)
+	}
+	return e
 
 }
 
@@ -805,8 +873,8 @@ func counter(sr *SQLReplayer) {
 }
 
 func generateReplayReport(sr *SQLReplayer) error {
-	sr.mutex.Lock()
-	defer sr.mutex.Unlock()
+	// sr.mutex.Lock()
+	// defer sr.mutex.Unlock()
 
 	if sr.ReplayRowCount > 0 && !sr.DryRun {
 
