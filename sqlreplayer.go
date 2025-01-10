@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -41,6 +42,8 @@ const (
 	EXIT
 )
 
+const TASK_CHAN_LENGTH = 20
+
 func (s Status) String() string {
 	switch s {
 	case PROCESSING:
@@ -68,8 +71,24 @@ type replayUnit struct {
 	Time      uint64
 }
 
+type task struct {
+	taskSeq        int
+	parseFilename  string
+	parseFullPath  string
+	replayFilename string
+	replayFullPath string
+
+	parseStatus       bool
+	parseFilePos      int64
+	parseRows         int64
+	replayStatus      bool
+	replayFilePos     int64
+	connsToReplayRows int64
+}
+
 type SQLReplayer struct {
-	JobSeq, TaskSeq uint64 //jobSeq is global uniq id , taskSeq is uniq id in a job
+	JobSeq  uint64 //jobSeq is global uniq id
+	TaskSeq int    //taskSeq is uniq id in a job
 
 	mutex sync.Mutex
 
@@ -78,9 +97,7 @@ type SQLReplayer struct {
 	LogType string            //file type
 	parser  parser.FileParser //parser for file type
 
-	ParserFileList, ReplayFileList    []string
-	ParserFilStatus, ReplayFileStatus []bool  // 1 for finished
-	ParserFilePos, ReplayFilePos      []int64 // pos for file
+	tasks map[int]*task
 
 	// user define time range
 	Begin time.Time
@@ -138,6 +155,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			logger:   c.Logger,
 			stopchan: make(chan struct{}),
 			donechan: make(chan struct{}),
+			taskchan: make(chan int, TASK_CHAN_LENGTH),
 		}
 		sr.logger.Sugar().Infof("begin to load meta file from %s", c.Metafile)
 		err := sr.Load(c.Metafile)
@@ -147,12 +165,6 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 
 		if err != nil {
 			return nil, err
-		}
-
-		if len(sr.ParserFileList) > 0 {
-			sr.taskchan = make(chan int, len(sr.ParserFileList))
-		} else {
-			sr.taskchan = make(chan int, len(sr.ReplayFileList))
 		}
 
 	} else {
@@ -176,7 +188,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			logger:   c.Logger,
 			stopchan: make(chan struct{}),
 			donechan: make(chan struct{}),
-			taskchan: make(chan int, len(c.FileList)),
+			taskchan: make(chan int, TASK_CHAN_LENGTH),
 
 			Status: PROCESSING,
 		}
@@ -191,24 +203,12 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 		switch strings.ToUpper(c.ExecType) {
 		case "ANALYZE":
 			sr.ExecMode = model.ANALYZE
-			sr.ParserFileList = c.FileList
-			sr.ParserFilStatus = make([]bool, len(sr.ParserFileList))
-			sr.ParserFilePos = make([]int64, len(sr.ParserFileList))
+
 		case "REPLAY":
 			sr.ExecMode = model.REPLAY
-			sr.ReplayFileList = c.FileList
-			sr.ReplayFileStatus = make([]bool, len(sr.ReplayFileList))
-			sr.ReplayFilePos = make([]int64, len(sr.ReplayFileList))
 
 		case "BOTH":
 			sr.ExecMode = model.ANALYZE | model.REPLAY
-			sr.ParserFileList = c.FileList
-			sr.ParserFilStatus = make([]bool, len(sr.ParserFileList))
-			sr.ParserFilePos = make([]int64, len(sr.ParserFileList))
-
-			sr.ReplayFileList = make([]string, len(sr.ParserFileList))
-			sr.ReplayFileStatus = make([]bool, len(sr.ReplayFileList))
-			sr.ReplayFilePos = make([]int64, len(sr.ReplayFileList))
 
 		default:
 			return nil, errors.New(" unknown exec type")
@@ -275,12 +275,13 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 		}
 
 	}
+	sr.tasks = make(map[int]*task)
 
-	//init consumers
-	for i := range c.FileList {
-		sr.taskchan <- i
-	}
-	close(sr.taskchan)
+	// //init consumers
+	// for i := range c.FileList {
+	// 	sr.taskchan <- i
+	// }
+	// close(sr.taskchan)
 
 	//init parser
 	if sr.ExecMode&model.ANALYZE != 0 {
@@ -295,23 +296,23 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			return nil, errors.New("unknow log type.")
 		}
 
-		//check if file exist
-		for _, f := range sr.ParserFileList {
-			if !utils.FileExists(f) {
-				return nil, errors.New("file:" + f + " not exist.")
-			}
-		}
+		// //check if file exist
+		// for _, f := range sr.ParserFileList {
+		// 	if !utils.FileExists(f) {
+		// 		return nil, errors.New("file:" + f + " not exist.")
+		// 	}
+		// }
 	}
 
-	if sr.ExecMode&model.REPLAY != 0 {
+	// if sr.ExecMode&model.REPLAY != 0 {
 
-		//check if file exist
-		for _, f := range sr.ReplayFileList {
-			if !utils.FileExists(f) {
-				return nil, errors.New("file:" + f + " not exist.")
-			}
-		}
-	}
+	// 	//check if file exist
+	// 	for _, f := range sr.ReplayFileList {
+	// 		if !utils.FileExists(f) {
+	// 			return nil, errors.New("file:" + f + " not exist.")
+	// 		}
+	// 	}
+	// }
 
 	return &sr, nil
 
@@ -332,17 +333,21 @@ func (sr *SQLReplayer) Start() {
 				case <-sr.stopchan:
 					sr.logger.Sugar().Infof("stop sqlreplayer, jobid %d", sr.JobSeq)
 					return
-				case taskIndex, ok := <-sr.taskchan:
+				case t, ok := <-sr.taskchan:
 					{
 						if !ok {
 							sr.logger.Sugar().Infof("worker %d exit.", index)
 							return
 						}
 
+						sr.mutex.Lock()
+						task := sr.tasks[t]
+						sr.mutex.Unlock()
+
 						//file parse pharse
 						if sr.ExecMode&model.ANALYZE != 0 {
-							if !sr.ParserFilStatus[taskIndex] {
-								err := sr.analyze(taskIndex)
+							if !task.parseStatus {
+								err := sr.analyze(task)
 
 								if err != nil {
 
@@ -354,7 +359,7 @@ func (sr *SQLReplayer) Start() {
 										return
 									}
 								} else {
-									sr.logger.Sugar().Infof("finish parse %s %s", sr.LogType, sr.ParserFileList[taskIndex])
+									sr.logger.Sugar().Infof("finish parse %s %s", sr.LogType, task.parseFullPath)
 								}
 
 							}
@@ -362,8 +367,8 @@ func (sr *SQLReplayer) Start() {
 
 						//replay pharse
 						if sr.ExecMode&model.REPLAY != 0 {
-							if !sr.ReplayFileStatus[taskIndex] {
-								err := sr.replayRawSQL(taskIndex)
+							if !task.replayStatus {
+								err := sr.replayRawSQL(task)
 								if err != nil {
 									if err.Error() == "STOP" {
 										sr.logger.Sugar().Infof("recieve STOP signal,worker %d exit.", index)
@@ -430,6 +435,31 @@ func (sr *SQLReplayer) Start() {
 
 }
 
+func (sr *SQLReplayer) AddTask(fileFullPath string) {
+
+	sr.mutex.Lock()
+	t := task{taskSeq: sr.TaskSeq}
+	sr.TaskSeq++
+
+	if sr.ExecMode&model.ANALYZE != 0 {
+		t.parseFullPath = fileFullPath
+		t.parseFilename = filepath.Base(fileFullPath)
+		t.replayFilename = "rawsql_" + strconv.Itoa(t.taskSeq) + ".csv"
+		t.replayFullPath = filepath.Join(sr.Dir, t.replayFilename)
+	} else {
+		t.replayFilename = filepath.Base(fileFullPath)
+		t.replayFullPath = fileFullPath
+	}
+
+	sr.tasks[t.taskSeq] = &t
+	sr.mutex.Unlock()
+	sr.taskchan <- t.taskSeq
+}
+
+func (sr *SQLReplayer) CloseTaskChan() {
+	close(sr.taskchan)
+}
+
 func (sr *SQLReplayer) Save() {
 	sr.logger.Sugar().Infof("begin to save context for task, metafile %s.", sr.Dir+"/taskmeta")
 
@@ -493,16 +523,17 @@ func (sr *SQLReplayer) Close() {
 
 // analyze will parse file and save it in csv format
 // param [in] file: log file dir
-func (sr *SQLReplayer) analyze(index int) error {
+func (sr *SQLReplayer) analyze(t *task) error {
 
-	file := sr.ParserFileList[index]
-	pos := sr.ParserFilePos[index]
+	file := t.parseFullPath
+	pos := t.parseFilePos
 
 	l := sr.logger
 
 	l.Sugar().Infof("begin to %s %s from pos %d", sr.ExecMode, file, pos)
 
-	rawSQLFileDir := sr.Dir + "/rawsql_" + strconv.Itoa(index) + ".csv"
+	//output file in analyze phrase is replay full path in "replay" phrase.
+	rawSQLFileDir := t.replayFullPath
 
 	rawSQLFile, err := os.OpenFile(rawSQLFileDir, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -562,9 +593,9 @@ func (sr *SQLReplayer) analyze(index int) error {
 
 	})
 
-	sr.mutex.Lock()
-	sr.ParserFilePos[index] = curPos
+	t.parseFilePos = curPos
 
+	sr.mutex.Lock()
 	for k, v := range tmpSqlID2Fingerprint {
 		_, ok := tmpSqlID2Fingerprint[k]
 		if !ok {
@@ -575,11 +606,11 @@ func (sr *SQLReplayer) analyze(index int) error {
 		sr.SqlID2ReplayUints[k] = append(sr.SqlID2ReplayUints[k], slices...)
 	}
 
-	if err == nil {
-		sr.ParserFilStatus[index] = true
-	}
-
 	sr.mutex.Unlock()
+
+	if err == nil {
+		t.parseStatus = true
+	}
 
 	return err
 }
@@ -673,13 +704,11 @@ func analyzer(arr []replayUnit) (min, p25, p50, p75, p90, p99, max replayUnit, c
 	return
 }
 
-func (sr *SQLReplayer) replayRawSQL(index int) error {
+func (sr *SQLReplayer) replayRawSQL(t *task) error {
 
 	//load raw sql from csv , and locate the postion from metadata
-	sr.mutex.Lock()
-	filePath := sr.ReplayFileList[index]
-	curPos := sr.ReplayFilePos[index]
-	sr.mutex.Unlock()
+	filePath := t.replayFullPath
+	curPos := t.replayFilePos
 
 	fd, err := os.Open(filePath)
 	if err != nil {
@@ -836,12 +865,11 @@ func (sr *SQLReplayer) replayRawSQL(index int) error {
 	elapsed := time.Since(begin).Seconds()
 
 	if status == 1 {
-		sr.logger.Sugar().Infof("sql replay finish for file %s,time elasped %fs.", sr.ReplayFileList[index], elapsed)
-		sr.mutex.Lock()
-		sr.ReplayFileStatus[index] = true
-		sr.mutex.Unlock()
+		sr.logger.Sugar().Infof("sql replay finish for file %s,time elasped %fs.", t.replayFullPath, elapsed)
+		t.replayStatus = true
+
 	} else {
-		sr.logger.Sugar().Infof("file %s replay stop.", sr.ReplayFileList[index], elapsed)
+		sr.logger.Sugar().Infof("file %s replay stop.", t.replayFullPath, elapsed)
 	}
 	return e
 
