@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/luijianfie/sqlreplayer/connection"
+	"github.com/luijianfie/sqlreplayer/connector"
 	"github.com/luijianfie/sqlreplayer/model"
 	"github.com/luijianfie/sqlreplayer/parser"
 	"github.com/luijianfie/sqlreplayer/utils"
@@ -116,7 +116,7 @@ type SQLReplayer struct {
 	Begin time.Time
 	End   time.Time
 
-	Conns []connection.Param
+	Conns []connector.Param
 
 	//option
 	GenerateReport     bool
@@ -249,7 +249,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 						return nil, errors.New(fmt.Sprintf("invalid conn string,conn %d [ip:%s,port:%s,db:%s,user:%s]", idx, strs[3], strs[4], strs[5], strs[1]))
 					}
 				}
-				p := connection.Param{
+				p := connector.Param{
 					User:   strs[1],
 					Passwd: strs[2],
 					Ip:     strs[3],
@@ -260,7 +260,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 
 				switch strings.ToUpper(strs[0]) {
 				case "MYSQL":
-					p.Type = connection.MYSQL
+					p.Type = connector.MYSQL
 				}
 				sr.Conns = append(sr.Conns, p)
 			}
@@ -770,7 +770,7 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 	reader.LazyQuotes = true
 
 	// init db connection
-	dbs, err := connection.InitConnections(sr.Conns)
+	dbs, err := connector.InitConnections(sr.Conns)
 	if err != nil {
 		return err
 	}
