@@ -228,14 +228,14 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 		}
 
 		if sr.ExecMode&model.ANALYZE != 0 {
-			if len(c.FileList) == 0 || len(c.LogType) == 0 {
-				return nil, errors.New("analyze: filename and log type are need.")
+			if len(c.LogType) == 0 {
+				return nil, errors.New("analyze mode: log type are needed.")
 			}
 			sr.LogType = strings.ToUpper(c.LogType)
 		}
 		if sr.ExecMode&model.REPLAY != 0 {
-			if len(c.FileList) == 0 || len(c.Conns) == 0 {
-				return nil, errors.New("replay: filename and conn are need.")
+			if len(c.Conns) == 0 {
+				return nil, errors.New("replay mode: conn are needed.")
 			}
 
 			for idx, conn := range c.Conns {
