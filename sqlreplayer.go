@@ -276,7 +276,13 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 
 		}
 
-		//parse time
+		//parse time range
+		if len(c.Begin) == 0 {
+			c.Begin = "0000-01-01 00:00:00"
+		}
+		if len(c.End) == 0 {
+			c.End = "9999-12-31 23:59:59"
+		}
 		sr.Begin, err = time.Parse("2006-01-02 15:04:05", c.Begin)
 		if err != nil {
 			return nil, err
