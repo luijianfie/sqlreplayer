@@ -133,8 +133,8 @@ type SQLReplayer struct {
 	Current time.Time
 
 	Dir               string
+	ParseStatFileDir  string
 	ReplayStatFileDir string
-	replayStatFile    *os.File
 
 	SqlID2Fingerprint map[string]*sqlStatus // map[SQLID] -> fingerprint
 
@@ -232,6 +232,15 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 				return nil, errors.New("analyze mode: log type are needed.")
 			}
 			sr.LogType = strings.ToUpper(c.LogType)
+
+			//init File
+			sr.ParseStatFileDir = sr.Dir + "/rawsql_analyze_report.csv"
+
+			// statFile, err := os.Create(sr.ReplayStatFileDir)
+			// if err != nil {
+			// 	return nil, err
+			// }
+			// sr.replayStatFile = statFile
 		}
 		if sr.ExecMode&model.REPLAY != 0 {
 			if len(c.Conns) == 0 {
@@ -268,11 +277,11 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			//init File
 			sr.ReplayStatFileDir = sr.Dir + "/replay_stats.csv"
 
-			statFile, err := os.Create(sr.ReplayStatFileDir)
-			if err != nil {
-				return nil, err
-			}
-			sr.replayStatFile = statFile
+			// statFile, err := os.Create(sr.ReplayStatFileDir)
+			// if err != nil {
+			// 	return nil, err
+			// }
+			// sr.replayStatFile = statFile
 
 		}
 
@@ -534,9 +543,9 @@ func (sr *SQLReplayer) Load(filename string) error {
 }
 
 func (sr *SQLReplayer) Close() {
-	if sr.replayStatFile != nil {
-		sr.replayStatFile.Close()
-	}
+	// if sr.replayStatFile != nil {
+	// 	sr.replayStatFile.Close()
+	// }
 	close(sr.donechan)
 }
 
@@ -677,8 +686,7 @@ func (sr *SQLReplayer) analyze(t *task) error {
 
 func (sr *SQLReplayer) generateRawSQLReport() error {
 
-	analyzeReportFile := sr.Dir + "/rawsql_analyze_report.csv"
-	reportFile, err := os.Create(analyzeReportFile)
+	reportFile, err := os.Create(sr.ParseStatFileDir)
 	if err != nil {
 		return err
 	}
@@ -709,7 +717,7 @@ func (sr *SQLReplayer) generateRawSQLReport() error {
 			return err
 		}
 	}
-	sr.logger.Sugar().Infof("raw sql report save to %s", analyzeReportFile)
+	sr.logger.Sugar().Infof("raw sql report save to %s", sr.ParseStatFileDir)
 
 	return nil
 }
@@ -983,7 +991,13 @@ func generateReplayReport(sr *SQLReplayer) error {
 
 	if sr.ReplayRowCount > 0 && !sr.DryRun {
 
-		writer := csv.NewWriter(sr.replayStatFile)
+		statFile, err := os.Create(sr.ReplayStatFileDir)
+		if err != nil {
+			return err
+		}
+		defer statFile.Close()
+
+		writer := csv.NewWriter(statFile)
 		defer writer.Flush()
 
 		sr.logger.Sugar().Infof("begin to generate report for replay phrase. num of sqlid %d.", len(sr.SqlID2Fingerprint))
@@ -996,7 +1010,7 @@ func generateReplayReport(sr *SQLReplayer) error {
 				prefix + "avg(ms)", prefix + "execution"}
 			header = append(header, subHeaders...)
 		}
-		err := writer.Write(header)
+		err = writer.Write(header)
 		if err != nil {
 			return err
 		}
@@ -1031,4 +1045,66 @@ func generateReplayReport(sr *SQLReplayer) error {
 	}
 
 	return nil
+}
+
+type jobStatus struct {
+	ExecMode     string
+	TaskNumTotal int
+	Finish       int
+}
+
+func (sr *SQLReplayer) ShowJobStatus() jobStatus {
+
+	js := jobStatus{}
+
+	sr.mutex.Lock()
+
+	//analyze or both
+	if sr.ExecMode&model.ANALYZE != 0 {
+		if sr.ExecMode&model.REPLAY != 0 {
+			js.ExecMode = "both"
+		} else {
+			js.ExecMode = "analyze"
+		}
+	} else {
+		js.ExecMode = "replay"
+	}
+
+	for _, t := range sr.tasks {
+
+		//for "replay" taks
+		if sr.ExecMode&model.REPLAY != 0 {
+
+			if t.replayStatus {
+				js.Finish += 1
+			}
+		} else {
+			if t.parseStatus {
+				js.Finish += 1
+			}
+
+		}
+		js.TaskNumTotal += 1
+	}
+
+	sr.mutex.Unlock()
+
+	return js
+}
+
+// return tableList and execution for this table composition
+func (sr *SQLReplayer) ShowTableJoinFrequency() map[string]uint64 {
+
+	ret := make(map[string]uint64)
+
+	sr.mutex.Lock()
+
+	for _, sqlStatus := range sr.SqlID2Fingerprint {
+		ret[sqlStatus.Tablelist] = sqlStatus.execution
+	}
+
+	sr.mutex.Unlock()
+
+	return ret
+
 }
