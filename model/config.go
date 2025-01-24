@@ -14,10 +14,11 @@ type Config struct {
 	Multi              int      `yaml:"multiplier"`
 	QueryOnly          bool     `yaml:"query_only"`
 	GenerateReport     bool     `yaml:"generate_report"`
-	SaveRawSQLInReport bool     `yaml:"save_raw_sql"`
+	SaveRawSQLInReport bool     `yaml:"save_raw_sql"` // save raw sql in report
 	DrawPic            bool     `yaml:"draw_pic"`
 	DryRun             bool     `yaml:"dry_run"`
-	WorkerNum          int      `yaml:"worker_num"`
+	WorkerNum          int      `yaml:"worker_num"`  // number of workers
+	DeleteFile         bool     `yaml:"delete_file"` // if delete source file after processing
 
 	Dir      string `yaml:"save_dir"`
 	Metafile string `yaml:"metafile"`

@@ -16,15 +16,13 @@ type DBtype int
 
 const (
 	MYSQL DBtype = iota
-	OCEANBASE
+	// OCEANBASE
 )
 
 func (t DBtype) String() string {
 	switch t {
 	case MYSQL:
 		return "mysql"
-	case OCEANBASE:
-		return "oceanbase"
 	default:
 		return "Unknown"
 	}
@@ -34,6 +32,7 @@ type Param struct {
 	Ip     string
 	Port   string
 	User   string
+	Sid    string
 	Passwd string
 	DB     string
 	Type   DBtype
@@ -50,19 +49,13 @@ func (m *Mysql) InitConn() *sql.DB {
 	if err != nil {
 		return nil
 	}
+	if m.Thread == 0 {
+		m.Thread = 1
+	}
 
 	db.SetMaxOpenConns(m.Thread)
 	db.SetMaxIdleConns(m.Thread)
 	return db
-}
-
-type Oceanbase struct {
-	Param
-}
-
-func (m *Oceanbase) InitConn() *sql.DB {
-
-	return nil
 }
 
 func InitConnections(conns []Param) ([]*sql.DB, error) {
@@ -74,6 +67,8 @@ func InitConnections(conns []Param) ([]*sql.DB, error) {
 		switch conn.Type {
 		case MYSQL:
 			connector = &Mysql{Param: conn}
+		default:
+			return nil, errors.New("unsupported connection type")
 		}
 
 		db := connector.InitConn()

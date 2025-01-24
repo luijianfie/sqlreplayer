@@ -6,12 +6,12 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,9 +124,10 @@ type SQLReplayer struct {
 	QueryOnly          bool
 	DryRun             bool
 	DrawPic            bool
-	Currency           int //num of worker
-	Multiplier         int //multiplier
-	Thread             int //thread pool for one database instance
+	DeleteFile         bool // delete file from processing
+	Currency           int  //num of worker
+	Multiplier         int  //multiplier
+	Thread             int  //thread pool for one database instance
 	wg                 sync.WaitGroup
 
 	// timestamp for task
@@ -197,6 +198,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			Currency:           c.WorkerNum,
 			Multiplier:         c.Multi,
 			Thread:             c.Thread,
+			DeleteFile:         c.DeleteFile,
 
 			logger:   c.Logger,
 			stopchan: make(chan struct{}),
@@ -234,7 +236,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			sr.LogType = strings.ToUpper(c.LogType)
 
 			//init File
-			sr.ParseStatFileDir = sr.Dir + "/rawsql_analyze_report.csv"
+			sr.ParseStatFileDir = sr.Dir + "/rawsql_analyze_report.html"
 
 			// statFile, err := os.Create(sr.ReplayStatFileDir)
 			// if err != nil {
@@ -435,7 +437,7 @@ func (sr *SQLReplayer) Start() {
 			}
 
 			if sr.ExecMode&model.REPLAY != 0 {
-				generateReplayReport(sr)
+				sr.generateReplayReport()
 			}
 		}
 
@@ -679,9 +681,28 @@ func (sr *SQLReplayer) analyze(t *task) error {
 
 	if err == nil {
 		t.parseStatus = true
+		if sr.DeleteFile {
+			err := os.Remove(t.parseFullPath)
+			l.Sugar().Infof("begin to remove file %s", t.parseFullPath)
+			if err != nil {
+				l.Sugar().Errorf("failed to remove file %s, err:%s", t.parseFullPath, err.Error())
+			}
+		}
 	}
 
 	return err
+}
+
+type SQLRecord struct {
+	SQLID       string
+	Fingerprint string
+	TableList   string
+	Min         string
+	MinSQL      string
+	Max         string
+	MaxSQL      string
+	Avg         string
+	Execution   string
 }
 
 func (sr *SQLReplayer) generateRawSQLReport() error {
@@ -691,75 +712,251 @@ func (sr *SQLReplayer) generateRawSQLReport() error {
 		return err
 	}
 	defer reportFile.Close()
-	writer := csv.NewWriter(reportFile)
-	defer writer.Flush()
 
-	header := []string{"sqlid", "fingerprint", "sqltype", "tablelist"}
-	subHeaders := []string{"min(ms)", "min-sql",
-		"max(ms)", "max-sql",
-		"avg(ms)", "execution"}
-	header = append(header, subHeaders...)
+	data := []SQLRecord{}
 
-	err = writer.Write(header)
-	if err != nil {
-		panic(err)
+	additionalInfo := false
+
+	if sr.LogType == strings.ToUpper("slowlog") {
+		additionalInfo = true
 	}
 
 	for sqlID, sqlStatus := range sr.SqlID2Fingerprint {
-		row := []string{sqlID, sqlStatus.fingerprint, sqlStatus.Sqltype, sqlStatus.Tablelist}
 
-		row = append(row, []string{
-			strconv.FormatUint(sqlStatus.min, 10), sqlStatus.minsql,
-			strconv.FormatUint(sqlStatus.max, 10), sqlStatus.maxsql,
-			strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64), strconv.FormatUint(sqlStatus.execution, 10)}...)
-		err = writer.Write(row)
-		if err != nil {
-			return err
+		record := SQLRecord{
+			SQLID:       sqlID,
+			Fingerprint: sqlStatus.fingerprint,
+			TableList:   sqlStatus.Tablelist,
+			Avg:         strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64),
+			Execution:   strconv.FormatUint(sqlStatus.execution, 10),
 		}
-	}
-	sr.logger.Sugar().Infof("raw sql report save to %s", sr.ParseStatFileDir)
 
+		if additionalInfo {
+			record.Min = strconv.FormatUint(sqlStatus.min, 10)
+			record.MinSQL = sqlStatus.minsql
+			record.Max = strconv.FormatUint(sqlStatus.max, 10)
+			record.MaxSQL = sqlStatus.maxsql
+		}
+
+		data = append(data, record)
+	}
+
+	const tmpl = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>SQL Report</title>
+      <style>
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        th, td {
+          border: 1px solid #ccc;
+          padding: 8px;
+          text-align: left; 
+          word-wrap: break-word;
+        }
+        th {
+          background-color: #f4f4f4;
+          cursor: pointer;
+        }
+        .long-sql {
+          max-height: 60px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          position: relative;
+          width: 300px; 
+        }
+        .long-sql.expanded {
+          max-height: none;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .toggle {
+          cursor: pointer;
+          color: blue;
+          text-decoration: underline;
+        }
+        
+        td, th {
+          text-align: left; 
+        }
+        .min-max-column {
+          width: 120px;
+        }
+        .fingerprint-column, .min-sql-column, .max-sql-column {
+          width: 200px;
+        }
+        .hidden {
+          display: none;
+        }
+        .control-panel {
+          margin-bottom: 10px;
+        }
+        .control-panel label {
+          margin-right: 15px;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>SQL Execution Report </h1>
+      <div class="control-panel">
+        <label><input type="checkbox" class="column-toggle" data-column="0" checked> SQL ID</label>
+        <label><input type="checkbox" class="column-toggle" data-column="1" checked> Fingerprint</label>
+        <label><input type="checkbox" class="column-toggle" data-column="2" checked> Tables</label>
+        <label><input type="checkbox" class="column-toggle" data-column="3" checked> Min (ms)</label>
+        <label><input type="checkbox" class="column-toggle" data-column="4" checked> Min SQL</label>
+        <label><input type="checkbox" class="column-toggle" data-column="5" checked> Max (ms)</label>
+        <label><input type="checkbox" class="column-toggle" data-column="6" checked> Max SQL</label>
+        <label><input type="checkbox" class="column-toggle" data-column="7" checked> Avg (ms)</label>
+        <label><input type="checkbox" class="column-toggle" data-column="8" checked> Execution</label>
+      </div>
+      <table id="sqlTable">
+        <thead>
+          <tr>
+            <th onclick="sortTable(0)">SQL ID</th>
+            <th class="fingerprint-column">Fingerprint</th>
+            <th>Tables</th>
+            <th class="min-max-column" onclick="sortTable(3)">Min (ms)</th>
+            <th class="min-sql-column">Min SQL</th>
+            <th class="min-max-column" onclick="sortTable(5)">Max (ms)</th>
+            <th class="max-sql-column">Max SQL</th>
+            <th class="min-max-column" onclick="sortTable(7)">Avg (ms)</th>
+            <th onclick="sortTable(8, true)">Execution</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .}}
+          <tr>
+            <td>{{.SQLID}}</td>
+            <td class="fingerprint-column">
+                <div class="long-sql" data-content="{{.Fingerprint}}">
+                    {{.Fingerprint}}
+                </div>
+                <span class="toggle" onclick="toggleDetails(this)">Expand</span>
+            </td>
+            <td>
+                <div class="long-sql" data-content="{{.TableList}}">
+                    {{.TableList}}
+                </div>
+                <span class="toggle" onclick="toggleDetails(this)">Expand</span>
+            </td>
+            <td class="min-max-column">{{.Min}}</td>
+            <td class="min-sql-column">
+              <div class="long-sql" data-content="{{.MinSQL}}">
+                {{.MinSQL}}
+              </div>
+              <span class="toggle" onclick="toggleDetails(this)">Expand</span>
+            </td>
+            <td class="min-max-column">{{.Max}}</td>
+            <td class="max-sql-column">
+              <div class="long-sql" data-content="{{.MaxSQL}}">
+                {{.MaxSQL}}
+              </div>
+              <span class="toggle" onclick="toggleDetails(this)">Expand</span>
+            </td>
+            <td class="min-max-column">{{.Avg}}</td>
+            <td>{{.Execution}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      <script>
+        
+        function toggleDetails(toggleButton) {
+          const longSqlDiv = toggleButton.previousElementSibling;
+          const content = longSqlDiv.dataset.content;
+    
+          if (content.length > 100) {  
+            if (longSqlDiv.classList.contains('expanded')) {
+              longSqlDiv.classList.remove('expanded');
+              toggleButton.textContent = 'Expand';
+            } else {
+              longSqlDiv.classList.add('expanded');
+              toggleButton.textContent = 'Collapse';
+            }
+          } else {
+            toggleButton.style.display = 'none';  
+          }
+        }
+    
+        function sortTable(n, isNumeric = false) {
+          const table = document.getElementById('sqlTable');
+          const rows = Array.from(table.rows).slice(1);
+          const dir = table.dataset.sortDir === 'asc' ? 'desc' : 'asc';
+          rows.sort((a, b) => {
+            const x = isNumeric ? parseInt(a.cells[n].innerText, 10) : a.cells[n].innerText.toLowerCase();
+            const y = isNumeric ? parseInt(b.cells[n].innerText, 10) : b.cells[n].innerText.toLowerCase();
+            return dir === 'asc' ? x - y : y - x;
+          });
+          table.dataset.sortDir = dir;
+          const tbody = table.tBodies[0];
+          rows.forEach(row => tbody.appendChild(row));
+        }
+    
+        document.querySelectorAll('.column-toggle').forEach(toggle => {
+          toggle.addEventListener('change', function () {
+            const column = this.dataset.column;
+            const isChecked = this.checked;
+            const table = document.getElementById('sqlTable');
+    
+            // 控制表头和每行对应列的显示/隐藏
+            table.querySelectorAll(` + "`th:nth-child(${+column + 1}), td:nth-child(${+column + 1})`" + `)
+              .forEach(cell => {
+                cell.style.display = isChecked ? '' : 'none';
+              });
+          });
+        });
+      </script>
+    </body>
+    </html>
+    `
+
+	t := template.Must(template.New("report").Parse(tmpl))
+	if err := t.Execute(reportFile, data); err != nil {
+		return err
+	}
+
+	sr.logger.Sugar().Infof("raw sql report saved to %s", sr.ParseStatFileDir)
 	return nil
-}
 
-func analyzer(arr []replayUnit) (min, p25, p50, p75, p90, p99, max replayUnit, count uint64, average float64, seqs []uint64) {
+	// reportFile, err := os.Create(sr.ParseStatFileDir)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer reportFile.Close()
+	// writer := csv.NewWriter(reportFile)
+	// defer writer.Flush()
 
-	if len(arr) < 1 {
-		return
-	}
-	seqs = make([]uint64, len(arr))
+	// header := []string{"sqlid", "fingerprint", "sqltype", "tablelist"}
+	// subHeaders := []string{"min(ms)", "min-sql",
+	// 	"max(ms)", "max-sql",
+	// 	"avg(ms)", "execution"}
+	// header = append(header, subHeaders...)
 
-	sum := uint64(0)
-	for i, sr := range arr {
-		sum += sr.Time
-		seqs[i] = sr.Time
-	}
+	// err = writer.Write(header)
+	// if err != nil {
+	// 	panic(err)
+	// }
 
-	sort.Slice(arr, func(i, j int) bool {
-		return arr[i].Time < arr[j].Time
-	})
+	// for sqlID, sqlStatus := range sr.SqlID2Fingerprint {
+	// 	row := []string{sqlID, sqlStatus.fingerprint, sqlStatus.Sqltype, sqlStatus.Tablelist}
 
-	index := int(float64(len(arr)-1) * 0.25)
-	p25 = arr[index]
+	// 	row = append(row, []string{
+	// strconv.FormatUint(sqlStatus.min, 10), sqlStatus.minsql,
+	// strconv.FormatUint(sqlStatus.max, 10), sqlStatus.maxsql,
+	// strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64), strconv.FormatUint(sqlStatus.execution, 10)}...)
+	// 	err = writer.Write(row)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
+	// sr.logger.Sugar().Infof("raw sql report save to %s", sr.ParseStatFileDir)
 
-	index = int(float64(len(arr)-1) * 0.50)
-	p50 = arr[index]
-
-	index = int(float64(len(arr)-1) * 0.75)
-	p75 = arr[index]
-
-	index = int(float64(len(arr)-1) * 0.90)
-	p90 = arr[index]
-
-	index = int(float64(len(arr)-1) * 0.99)
-	p99 = arr[index]
-
-	min = arr[0]
-	max = arr[len(arr)-1]
-
-	average = float64(sum) / float64(len(arr))
-	count = uint64(len(arr))
-	return
+	// return nil
 }
 
 func (sr *SQLReplayer) replayRawSQL(t *task) error {
@@ -953,6 +1150,14 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 		sr.logger.Sugar().Infof("sql replay finish for file %s,time elasped %fs.", t.replayFullPath, elapsed)
 		t.replayStatus = true
 
+		if sr.DeleteFile {
+			err := os.Remove(t.replayFullPath)
+			sr.logger.Sugar().Infof("begin to remove file %s", t.replayFullPath)
+			if err != nil {
+				sr.logger.Sugar().Errorf("failed to remove file %s, err:%s", t.replayFullPath, err.Error())
+			}
+		}
+
 	} else {
 		sr.logger.Sugar().Infof("file %s replay stop.", t.replayFullPath, elapsed)
 	}
@@ -985,7 +1190,7 @@ func counter(sr *SQLReplayer) {
 
 }
 
-func generateReplayReport(sr *SQLReplayer) error {
+func (sr *SQLReplayer) generateReplayReport() error {
 	// sr.mutex.Lock()
 	// defer sr.mutex.Unlock()
 
