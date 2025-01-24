@@ -1305,7 +1305,12 @@ func (sr *SQLReplayer) ShowTableJoinFrequency() map[string]uint64 {
 	sr.mutex.Lock()
 
 	for _, sqlStatus := range sr.SqlID2Fingerprint {
-		ret[sqlStatus.Tablelist] = sqlStatus.execution
+		_, ok := ret[sqlStatus.Tablelist]
+		if ok {
+			ret[sqlStatus.Tablelist] = sqlStatus.execution + ret[sqlStatus.Tablelist]
+		} else {
+			ret[sqlStatus.Tablelist] = sqlStatus.execution
+		}
 	}
 
 	sr.mutex.Unlock()
