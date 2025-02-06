@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dlclark/regexp2"
 	"github.com/luijianfie/sqlreplayer/connector"
 	"github.com/luijianfie/sqlreplayer/model"
 	"github.com/luijianfie/sqlreplayer/parser"
@@ -42,6 +44,15 @@ const (
 	EXIT
 )
 
+type SQLMode int
+
+const (
+	QUERY SQLMode = 1 << iota
+	DML
+	DDL
+	ELSE
+)
+
 const TASK_CHAN_LENGTH = 20
 
 func (s Status) String() string {
@@ -60,6 +71,19 @@ func (s Status) String() string {
 		return "replay error"
 	default:
 		return "Unknown"
+	}
+}
+
+func (s SQLMode) String() string {
+	switch s {
+	case QUERY:
+		return "query"
+	case DML:
+		return "dml"
+	case DDL:
+		return "ddl"
+	default:
+		return "else"
 	}
 }
 
@@ -121,7 +145,8 @@ type SQLReplayer struct {
 	//option
 	GenerateReport     bool
 	SaveRawSQLInReport bool
-	QueryOnly          bool
+	ReplaySQLType      SQLMode
+	ReplayFilter       string
 	DryRun             bool
 	DrawPic            bool
 	DeleteFile         bool // delete file from processing
@@ -191,7 +216,8 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			SqlID2Fingerprint:  make(map[string]*sqlStatus),
 			SaveRawSQLInReport: c.SaveRawSQLInReport,
 			GenerateReport:     c.GenerateReport,
-			QueryOnly:          c.QueryOnly,
+			ReplaySQLType:      QUERY,
+			ReplayFilter:       c.ReplayFilter,
 			DryRun:             c.DryRun,
 			DrawPic:            c.DrawPic,
 			QueryID2RelayStats: make(map[string][]*sqlStatus),
@@ -214,6 +240,8 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 		if err != nil {
 			return nil, errors.New("failed to create directory: " + sr.Dir)
 		}
+
+		//replay sql type
 
 		switch strings.ToUpper(c.ExecType) {
 		case "ANALYZE":
@@ -249,6 +277,22 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 				return nil, errors.New("replay mode: conn are needed.")
 			}
 
+			//set replay sql mode
+			strs := strings.Split(c.ReplaySQLType, ",")
+			for _, str := range strs {
+				switch strings.ToUpper(strings.TrimSpace(str)) {
+				case "QUERY":
+					sr.ReplaySQLType |= QUERY
+				case "DML":
+					sr.ReplaySQLType |= DML
+				case "DDL":
+					sr.ReplaySQLType |= DDL
+				case "ALL":
+					sr.ReplaySQLType |= QUERY | DML | DDL | ELSE
+				}
+			}
+
+			//init conn info
 			for idx, conn := range c.Conns {
 				strs := strings.Split(conn, ":")
 				// 0	1		2	  3		4	5
@@ -277,7 +321,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			}
 
 			//init File
-			sr.ReplayStatFileDir = sr.Dir + "/replay_stats.csv"
+			sr.ReplayStatFileDir = sr.Dir + "/replay_stats.html"
 
 			// statFile, err := os.Create(sr.ReplayStatFileDir)
 			// if err != nil {
@@ -727,11 +771,11 @@ func (sr *SQLReplayer) generateRawSQLReport() error {
 			SQLID:       sqlID,
 			Fingerprint: sqlStatus.fingerprint,
 			TableList:   sqlStatus.Tablelist,
-			Avg:         strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64),
 			Execution:   strconv.FormatUint(sqlStatus.execution, 10),
 		}
 
 		if additionalInfo {
+			record.Avg = strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64)
 			record.Min = strconv.FormatUint(sqlStatus.min, 10)
 			record.MinSQL = sqlStatus.minsql
 			record.Max = strconv.FormatUint(sqlStatus.max, 10)
@@ -923,40 +967,6 @@ func (sr *SQLReplayer) generateRawSQLReport() error {
 	sr.logger.Sugar().Infof("raw sql report saved to %s", sr.ParseStatFileDir)
 	return nil
 
-	// reportFile, err := os.Create(sr.ParseStatFileDir)
-	// if err != nil {
-	// 	return err
-	// }
-	// defer reportFile.Close()
-	// writer := csv.NewWriter(reportFile)
-	// defer writer.Flush()
-
-	// header := []string{"sqlid", "fingerprint", "sqltype", "tablelist"}
-	// subHeaders := []string{"min(ms)", "min-sql",
-	// 	"max(ms)", "max-sql",
-	// 	"avg(ms)", "execution"}
-	// header = append(header, subHeaders...)
-
-	// err = writer.Write(header)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// for sqlID, sqlStatus := range sr.SqlID2Fingerprint {
-	// 	row := []string{sqlID, sqlStatus.fingerprint, sqlStatus.Sqltype, sqlStatus.Tablelist}
-
-	// 	row = append(row, []string{
-	// strconv.FormatUint(sqlStatus.min, 10), sqlStatus.minsql,
-	// strconv.FormatUint(sqlStatus.max, 10), sqlStatus.maxsql,
-	// strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64), strconv.FormatUint(sqlStatus.execution, 10)}...)
-	// 	err = writer.Write(row)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
-	// sr.logger.Sugar().Infof("raw sql report save to %s", sr.ParseStatFileDir)
-
-	// return nil
 }
 
 func (sr *SQLReplayer) replayRawSQL(t *task) error {
@@ -1000,6 +1010,12 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 	status := 0
 	var e error
 
+	//init replay filter
+	var filter *regexp2.Regexp
+	if len(sr.ReplayFilter) > 0 {
+		filter = regexp2.MustCompile(sr.ReplayFilter, regexp2.IgnoreCase)
+	}
+
 	for {
 		select {
 		case <-sr.stopchan:
@@ -1033,20 +1049,41 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 			//second column for sqlid
 			sql := record[0]
 
+			//filter sql
+			if filter != nil {
+				if matched, _ := filter.MatchString(sql); matched {
+					continue
+				}
+			}
+
 			//check if sql is a SELECT statement
-			if sr.QueryOnly {
-				rets, err := utils.IsSelectStatement(sql)
+			rets, err := utils.GetSQLStatement(sql)
 
-				if err != nil {
-					sr.logger.Sugar().Debugf("failed to parse sql [%s],err [%s]. skip it.", sql, err.Error())
-					continue
-				}
+			if err != nil {
+				sr.logger.Sugar().Debugf("failed to parse sql [%s],err [%s]. skip it.", sql, err.Error())
+				continue
+			}
 
-				//not select statement,skip it
-				if len(rets) == 0 || !rets[0] {
-					sr.logger.Sugar().Debugf("not select statement,skip ip. sql:%s", sql)
-					continue
-				}
+			if len(rets) == 0 {
+				sr.logger.Sugar().Debugf("stmt node is empty,skip ip. sql:%s", sql)
+				continue
+			}
+
+			var mode SQLMode
+			switch rets[0] {
+			case "DDL":
+				mode = DDL
+			case "DML":
+				mode = DML
+			case "QUERY":
+				mode = QUERY
+			case "ELSE":
+				mode = ELSE
+			}
+
+			if mode&sr.ReplaySQLType == 0 {
+				sr.logger.Sugar().Debugf("skip sql,sql type %s is not match,sql:%s", mode, sql)
+				continue
 			}
 
 			//generate sqlid,table list for sql
@@ -1191,64 +1228,689 @@ func counter(sr *SQLReplayer) {
 }
 
 func (sr *SQLReplayer) generateReplayReport() error {
-	// sr.mutex.Lock()
-	// defer sr.mutex.Unlock()
+	reportFile, err := os.Create(sr.ReplayStatFileDir)
+	if err != nil {
+		return err
+	}
+	defer reportFile.Close()
 
-	if sr.ReplayRowCount > 0 && !sr.DryRun {
+	var data []map[string]string
+	header := []string{"sqlid", "fingerprint", "tablelist"}
 
-		statFile, err := os.Create(sr.ReplayStatFileDir)
-		if err != nil {
-			return err
-		}
-		defer statFile.Close()
-
-		writer := csv.NewWriter(statFile)
-		defer writer.Flush()
-
-		sr.logger.Sugar().Infof("begin to generate report for replay phrase. num of sqlid %d.", len(sr.SqlID2Fingerprint))
-
-		header := []string{"sqlid", "fingerprint", "sqltype", "tablelist"}
-		for i := 0; i < len(sr.Conns); i++ {
-			prefix := fmt.Sprintf("conn_%d_", i)
-			subHeaders := []string{prefix + "min(ms)", prefix + "min-sql",
-				prefix + "max(ms)", prefix + "max-sql",
-				prefix + "avg(ms)", prefix + "execution"}
-			header = append(header, subHeaders...)
-		}
-		err = writer.Write(header)
-		if err != nil {
-			return err
-		}
-
-		for sqlid, dbsToStats := range sr.QueryID2RelayStats {
-
-			//in some cases, failed to execute sql
-			//dbsToStats[0] may be nil,skip this
-			if dbsToStats == nil {
-				continue
-			}
-			row := []string{sqlid, dbsToStats[0].fingerprint, dbsToStats[0].Sqltype, dbsToStats[0].Tablelist}
-			for i := 0; i < len(dbsToStats); i++ {
-				row = append(row, []string{
-					strconv.FormatUint(dbsToStats[i].min, 10), dbsToStats[i].minsql,
-					strconv.FormatUint(dbsToStats[i].max, 10), dbsToStats[i].maxsql,
-					strconv.FormatFloat(float64(dbsToStats[i].timeElapse)/float64(dbsToStats[i].execution), 'f', 2, 64), strconv.FormatUint(dbsToStats[i].execution, 10)}...)
-				// if sr.DrawPic {
-				// 	fname := "Conn" + strconv.Itoa(i) + "_" + sqlid
-				// 	utils.Draw(fname, sr.Dir+"/"+fname, seqs, float64(sr25.Time), float64(sr50.Time), float64(sr75.Time), float64(sr90.Time))
-				// 	sr.logger.Sugar().Infoln("draw picture for sqlid:" + sqlid + " to " + sr.Dir + "/" + fname + ".png.")
-				// }
-			}
-			err = writer.Write(row)
-			if err != nil {
-				return err
-			}
-
-		}
-		sr.logger.Sugar().Infof("save replay result to %s.", sr.ReplayStatFileDir)
-
+	// performance summary
+	type Summary struct {
+		TotalSQLs   []int     // total sql count for each conn
+		TotalTime   []uint64  // total execution time for each conn
+		TotalExec   []uint64  // total execution count for each conn
+		AvgResponse []float64 // average response time for each conn
+		BetterCount []int     // better performance count for each conn
 	}
 
+	// calculate performance summary
+	connCount := len(sr.Conns)
+	summary := Summary{
+		TotalSQLs:   make([]int, connCount),
+		TotalTime:   make([]uint64, connCount),
+		TotalExec:   make([]uint64, connCount),
+		AvgResponse: make([]float64, connCount),
+		BetterCount: make([]int, connCount),
+	}
+
+	// calculate performance summary while constructing data
+	for sqlid, dbsToStats := range sr.QueryID2RelayStats {
+		// almost impossible dbsToStats nil
+		// any sqlid will init its own dbsToStats,but when sql execution failed,it will be nil
+		if dbsToStats == nil || dbsToStats[0] == nil {
+			continue
+		}
+
+		row := map[string]string{
+			"sqlid":       sqlid,
+			"fingerprint": dbsToStats[0].fingerprint,
+			"tablelist":   dbsToStats[0].Tablelist,
+		}
+
+		// calculate average response time for baseline conn(conn_0)
+		var baselineAvg float64
+		if dbsToStats[0] != nil && dbsToStats[0].execution > 0 {
+			baselineAvg = float64(dbsToStats[0].timeElapse) / float64(dbsToStats[0].execution)
+		}
+
+		for i := 0; i < len(dbsToStats); i++ {
+			if dbsToStats[i] == nil {
+				continue
+			}
+
+			// accumulate stats data
+			summary.TotalSQLs[i]++
+			summary.TotalTime[i] += dbsToStats[i].timeElapse
+			summary.TotalExec[i] += dbsToStats[i].execution
+
+			// calculate average response time for current sql in current conn
+			currentAvg := float64(dbsToStats[i].timeElapse) / float64(dbsToStats[i].execution)
+
+			// if not baseline conn and better performance, increase better count
+			if i > 0 && currentAvg < baselineAvg {
+				summary.BetterCount[i]++
+			}
+
+			prefix := fmt.Sprintf("conn_%d_", i)
+			row[prefix+"min"] = strconv.FormatUint(dbsToStats[i].min, 10)
+			row[prefix+"min_sql"] = dbsToStats[i].minsql
+			row[prefix+"max"] = strconv.FormatUint(dbsToStats[i].max, 10)
+			row[prefix+"max_sql"] = dbsToStats[i].maxsql
+			row[prefix+"avg"] = strconv.FormatFloat(currentAvg, 'f', 1, 64)
+			row[prefix+"execution"] = strconv.FormatUint(dbsToStats[i].execution, 10)
+		}
+		data = append(data, row)
+	}
+
+	// calculate overall average response time
+	for i := range summary.AvgResponse {
+		if summary.TotalExec[i] > 0 {
+			summary.AvgResponse[i] = math.Round(float64(summary.TotalTime[i])/float64(summary.TotalExec[i])*10) / 10
+		}
+	}
+	// generate table header
+	for i := 0; i < len(sr.Conns); i++ {
+		prefix := fmt.Sprintf("conn_%d_", i)
+		header = append(header,
+			prefix+"min",
+			prefix+"min_sql",
+			prefix+"max",
+			prefix+"max_sql",
+			prefix+"avg",
+			prefix+"execution")
+	}
+
+	// HTML template
+	const tmpl = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>SQL Replay Report</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background-color: white;
+                border-radius: 8px;
+                padding: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .control-panel {
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f8f9fa;
+                border-radius: 4px;
+            }
+            .column-toggle {
+                margin: 5px;
+                padding: 5px;
+            }
+            .table-container {
+                overflow-x: auto;
+                max-height: 80vh;
+                position: relative;
+            }
+            table { 
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+                white-space: nowrap;
+            }
+            thead {
+                position: sticky;
+                top: 0;
+                background-color: #f8f9fa;
+                z-index: 1;
+            }
+            th, td { 
+                padding: 12px;
+                text-align: left;
+                border: 1px solid #dee2e6;
+            }
+            th { 
+                background-color: #f8f9fa;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            th:hover {
+                background-color: #e9ecef;
+            }
+            .sql-cell {
+                max-width: 300px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-family: monospace;
+            }
+            .sql-cell.expanded {
+                max-width: none;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            .toggle-btn {
+                display: block;
+                color: #0d6efd;
+                cursor: pointer;
+                font-size: 0.9em;
+                margin-top: 4px;
+            }
+            .toggle-btn:hover {
+                text-decoration: underline;
+            }
+            .conn-group {
+                border-left: 2px solid #dee2e6;
+                background-color: #fafafa;
+            }
+            tr:nth-child(even) {
+                background-color: #f8f9fa;
+            }
+            tr:hover {
+                background-color: #f2f2f2;
+            }
+            .search-box {
+                margin: 10px 0;
+                padding: 8px;
+                width: 200px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+
+            /* Performance comparison styles */
+            .performance-better {
+                background-color: #e6ffe6 !important;
+            }
+            .performance-worse {
+                background-color: #ffe6e6 !important;
+            }
+            
+            /* Performance difference indicator */
+            .diff-indicator {
+                font-size: 0.8em;
+                margin-left: 5px;
+            }
+            .diff-better {
+                color: #28a745;
+            }
+            .diff-worse {
+                color: #dc3545;
+            }
+
+            /* Quick filter buttons */
+            .quick-filters {
+                margin: 10px 0;
+            }
+            .quick-filter-btn {
+                margin: 0 5px;
+                padding: 8px 15px;
+                border: none;
+                border-radius: 4px;
+                background-color: #f8f9fa;
+                cursor: pointer;
+            }
+            .quick-filter-btn:hover {
+                background-color: #e9ecef;
+            }
+            .quick-filter-btn.active {
+                background-color: #007bff;
+                color: white;
+            }
+
+            /* Performance summary styles */
+            .performance-summary {
+                margin: 20px 0;
+                padding: 20px;
+                background-color: #f8f9fa;
+                border-radius: 8px;
+            }
+            .performance-summary h3 {
+                margin: 0 0 20px 0;
+                color: #2c3e50;
+                font-size: 1.5em;
+            }
+            .summary-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+            }
+            .summary-item {
+                padding: 20px;
+                background-color: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            }
+            .summary-item h4 {
+                margin: 0 0 15px 0;
+                color: #2c3e50;
+                font-size: 1.2em;
+                border-bottom: 2px solid #e9ecef;
+                padding-bottom: 10px;
+            }
+            .conn-info {
+                margin: 15px 0;
+                font-size: 0.95em;
+                color: #495057;
+            }
+            .conn-info-item {
+                display: flex;
+                align-items: center;
+                margin: 8px 0;
+                padding: 6px 10px;
+                background-color: #f8f9fa;
+                border-radius: 4px;
+            }
+            .conn-info-label {
+                font-weight: 600;
+                min-width: 50px;
+                margin-right: 10px;
+                color: #6c757d;
+            }
+            .conn-info-value {
+                font-family: monospace;
+                color: #212529;
+            }
+            .summary-stats {
+                margin-top: 15px;
+                padding-top: 15px;
+                border-top: 1px solid #e9ecef;
+            }
+            .stat-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin: 10px 0;
+                padding: 8px 12px;
+                background-color: #f8f9fa;
+                border-radius: 4px;
+                transition: background-color 0.2s;
+            }
+            .stat-item:hover {
+                background-color: #e9ecef;
+            }
+            .stat-label {
+                font-weight: 500;
+                color: #495057;
+            }
+            .stat-value {
+                font-weight: 600;
+                color: #0d6efd;
+            }
+            .better-count {
+                color: #198754;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>SQL Replay Report</h1>
+
+            <!-- Add Performance Summary Section -->
+            <div class="performance-summary">
+                <h3>Performance Summary</h3>
+                <div class="summary-grid">
+                    {{range $i := .ConnIndices}}
+                        <div class="summary-item">
+                            <h4>Connection {{$i}}{{if eq $i 0}} (Baseline){{end}}</h4>
+                            <div class="conn-info">
+                                <div class="conn-info-item">
+                                    <span class="conn-info-label">IP:</span>
+                                    <span class="conn-info-value">{{index $.Conns $i | getIP}}</span>
+                                </div>
+                                <div class="conn-info-item">
+                                    <span class="conn-info-label">Port:</span>
+                                    <span class="conn-info-value">{{index $.Conns $i | getPort}}</span>
+                                </div>
+                                <div class="conn-info-item">
+                                    <span class="conn-info-label">User:</span>
+                                    <span class="conn-info-value">{{index $.Conns $i | getUser}}</span>
+                                </div>
+                            </div>
+                            <div class="summary-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">Total SQLs</span>
+                                    <span class="stat-value">{{index $.Summary.TotalSQLs $i}}</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Avg Response</span>
+                                    <span class="stat-value">{{index $.Summary.AvgResponse $i}}ms</span>
+                                </div>
+                                {{if ne $i 0}}
+                                    <div class="stat-item">
+                                        <span class="stat-label">Better Performance</span>
+                                        <span class="stat-value better-count">{{index $.Summary.BetterCount $i}}</span>
+                                    </div>
+                                {{end}}
+                            </div>
+                        </div>
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="control-panel">
+                <h3>Display Settings</h3>
+                
+                <!-- Add Quick Filters -->
+                <div class="quick-filters">
+                    <button class="quick-filter-btn active" onclick="applyFilter('all')">All SQLs</button>
+                    {{range $i := .ConnIndices}}
+                        {{if ne $i 0}}
+                            <button class="quick-filter-btn" onclick="applyFilter('better-{{$i}}')">
+                                Better in Conn {{$i}}
+                            </button>
+                            <button class="quick-filter-btn" onclick="applyFilter('worse-{{$i}}')">
+                                Worse in Conn {{$i}}
+                            </button>
+                        {{end}}
+                    {{end}}
+                </div>
+
+                <div>
+                    <input type="text" class="search-box" id="searchInput" placeholder="Search...">
+                </div>
+                <div>
+                    <button onclick="toggleAllColumns(true)">Show All Columns</button>
+                    <button onclick="toggleAllColumns(false)">Hide All Columns</button>
+                </div>
+                <div id="columnToggles">
+                    <!-- Column toggle buttons will be generated by JS -->
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table id="sqlTable">
+                    <thead>
+                        <tr>
+                            {{range $index, $header := .Header}}
+                                <th onclick="sortTable({{$index}})" 
+                                    class="{{if hasPrefix $header "conn_"}}conn-group{{end}}"
+                                    data-column="{{$header}}">
+                                    {{$header}}
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            {{end}}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $row := .Data}}
+                            <tr>
+                                {{range $header := $.Header}}
+                                    <td class="{{if hasPrefix $header "conn_"}}conn-group{{end}}"
+                                        {{if hasPrefix $header "conn_"}}
+                                            data-conn="{{index (split $header "_") 1}}"
+                                            data-type="{{last (split $header "_")}}"
+                                        {{end}}>
+                                        {{if or (hasSuffix $header "_sql") (eq $header "fingerprint") (eq $header "tablelist")}}
+                                            <div class="sql-cell">{{index $row $header}}</div>
+                                            {{if ne (index $row $header) ""}}
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            {{end}}
+                                        {{else}}
+                                            {{index $row $header}}
+                                        {{end}}
+                                    </td>
+                                {{end}}
+                            </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <script>
+            // Toggle column visibility
+            function toggleColumn(columnName) {
+                const table = document.getElementById('sqlTable');
+                const index = Array.from(table.rows[0].cells).findIndex(
+                    cell => cell.dataset.column === columnName
+                );
+                if (index > -1) {
+                    const isVisible = document.querySelector(` + "`" + `.column-toggle[data-column="${columnName}"]` + "`" + `).checked;
+                    Array.from(table.rows).forEach(row => {
+                        const cell = row.cells[index];
+                        cell.style.display = isVisible ? '' : 'none';
+                    });
+                }
+            }
+
+            // Toggle all columns
+            function toggleAllColumns(show) {
+                const checkboxes = document.querySelectorAll('.column-toggle');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = show;
+                    toggleColumn(checkbox.dataset.column);
+                });
+            }
+
+            // Generate column toggle buttons
+            function generateColumnToggles() {
+                const headers = Array.from(document.querySelectorAll('th')).map(th => th.dataset.column);
+                const container = document.getElementById('columnToggles');
+                
+                // Group by connection
+                const groups = {};
+                headers.forEach(header => {
+                    const group = header.startsWith('conn_') ? header.split('_')[1] : 'basic';
+                    if (!groups[group]) {
+                        groups[group] = [];
+                    }
+                    groups[group].push(header);
+                });
+
+                // Create toggle buttons for each group
+                Object.entries(groups).forEach(([group, columns]) => {
+                    const groupDiv = document.createElement('div');
+                    groupDiv.style.marginBottom = '10px';
+                    
+                    const groupLabel = document.createElement('strong');
+                    groupLabel.textContent = group === 'basic' ? 'Basic Info: ' : ` + "`Connection ${group}: `" + `;
+                    groupDiv.appendChild(groupLabel);
+
+                    columns.forEach(column => {
+                        const label = document.createElement('label');
+                        label.style.marginRight = '15px';
+                        
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.checked = true;
+                        checkbox.className = 'column-toggle';
+                        checkbox.dataset.column = column;
+                        checkbox.onchange = () => toggleColumn(column);
+                        
+                        label.appendChild(checkbox);
+                        label.appendChild(document.createTextNode(column));
+                        groupDiv.appendChild(label);
+                    });
+
+                    container.appendChild(groupDiv);
+                });
+
+                // Add event listeners for show/hide all buttons
+                document.querySelector('button[onclick="toggleAllColumns(true)"]').addEventListener('click', () => toggleAllColumns(true));
+                document.querySelector('button[onclick="toggleAllColumns(false)"]').addEventListener('click', () => toggleAllColumns(false));
+            }
+
+            // Table sorting
+            function sortTable(colIndex) {
+                const table = document.getElementById('sqlTable');
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.rows);
+                const th = table.rows[0].cells[colIndex];
+                const isAsc = th.classList.contains('asc');
+
+                // Clear all sort indicators
+                table.querySelectorAll('th').forEach(header => {
+                    header.classList.remove('asc', 'desc');
+                });
+
+                // Set new sort direction
+                th.classList.add(isAsc ? 'desc' : 'asc');
+
+                rows.sort((a, b) => {
+                    let aVal = a.cells[colIndex].innerText.trim();
+                    let bVal = b.cells[colIndex].innerText.trim();
+
+                    // Try numeric sort
+                    const aNum = parseFloat(aVal);
+                    const bNum = parseFloat(bVal);
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return isAsc ? bNum - aNum : aNum - bNum;
+                    }
+
+                    // String sort
+                    return isAsc ? 
+                        bVal.localeCompare(aVal) : 
+                        aVal.localeCompare(bVal);
+                });
+
+                // Reinsert sorted rows
+                rows.forEach(row => tbody.appendChild(row));
+            }
+
+            // Toggle SQL cell expand/collapse
+            function toggleCell(btn) {
+                const cell = btn.previousElementSibling;
+                if (cell.classList.contains('expanded')) {
+                    cell.classList.remove('expanded');
+                    btn.textContent = 'Expand';
+                } else {
+                    cell.classList.add('expanded');
+                    btn.textContent = 'Collapse';
+                }
+            }
+
+            // Search functionality
+            document.getElementById('searchInput').addEventListener('input', function(e) {
+                const searchText = e.target.value.toLowerCase();
+                const tbody = document.querySelector('tbody');
+                Array.from(tbody.rows).forEach(row => {
+                    const text = Array.from(row.cells)
+                        .map(cell => cell.textContent)
+                        .join(' ')
+                        .toLowerCase();
+                    row.style.display = text.includes(searchText) ? '' : 'none';
+                });
+            });
+
+            // Add performance comparison functions
+            function calculatePerformanceDiff(row) {
+                const avgCells = Array.from(row.querySelectorAll('td[data-type="avg"]'));
+                if (avgCells.length < 2) return;
+
+                const baselineAvg = parseFloat(avgCells[0].textContent);
+                if (isNaN(baselineAvg)) return;
+
+                avgCells.forEach((cell, i) => {
+                    if (i === 0) return; // Skip baseline
+                    const currentAvg = parseFloat(cell.textContent);
+                    if (isNaN(currentAvg)) return;
+
+                    const diff = ((currentAvg - baselineAvg) / baselineAvg * 100).toFixed(1);
+                    const indicator = document.createElement('span');
+                    indicator.className = ` + "`diff-indicator ${diff < 0 ? 'diff-better' : 'diff-worse'}`" + `;
+                    indicator.textContent = ` + "`${diff > 0 ? '+' : ''}${diff}%`" + `;
+                    cell.appendChild(indicator);
+                });
+            }
+
+            function applyFilter(filterType) {
+                const tbody = document.querySelector('tbody');
+                const rows = Array.from(tbody.rows);
+
+                // Update active filter button
+                document.querySelectorAll('.quick-filter-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                event.target.classList.add('active');
+
+                rows.forEach(row => {
+                    const avgCells = Array.from(row.querySelectorAll('td[data-type="avg"]'));
+                    if (avgCells.length < 2) return;
+
+                    const baselineAvg = parseFloat(avgCells[0].textContent);
+                    if (isNaN(baselineAvg)) return;
+
+                    let show = true;
+                    if (filterType === 'all') {
+                        show = true;
+                    } else if (filterType.startsWith('better-')) {
+                        const connIndex = parseInt(filterType.split('-')[1]);
+                        const compAvg = parseFloat(avgCells[connIndex].textContent);
+                        show = !isNaN(compAvg) && compAvg < baselineAvg;
+                    } else if (filterType.startsWith('worse-')) {
+                        const connIndex = parseInt(filterType.split('-')[1]);
+                        const compAvg = parseFloat(avgCells[connIndex].textContent);
+                        show = !isNaN(compAvg) && compAvg > baselineAvg;
+                    }
+                    
+                    row.style.display = show ? '' : 'none';
+                });
+            }
+
+            // Initialize
+            document.addEventListener('DOMContentLoaded', function() {
+                generateColumnToggles();
+                
+                // Calculate and show performance differences
+                const rows = document.querySelectorAll('tbody tr');
+                rows.forEach(calculatePerformanceDiff);
+            });
+        </script>
+    </body>
+    </html>`
+
+	// prepare template data
+	templateData := struct {
+		Header      []string
+		Data        []map[string]string
+		ConnIndices []int
+		Summary     Summary
+		Conns       []connector.Param // add conn info
+	}{
+		Header:      header,
+		Data:        data,
+		ConnIndices: make([]int, connCount),
+		Summary:     summary,
+		Conns:       sr.Conns, // conn info
+	}
+	for i := range templateData.ConnIndices {
+		templateData.ConnIndices[i] = i
+	}
+
+	// parse template
+	t := template.Must(template.New("report").Funcs(template.FuncMap{
+		"hasSuffix": strings.HasSuffix,
+		"hasPrefix": strings.HasPrefix,
+		"split":     strings.Split,
+		"last": func(s []string) string {
+			if len(s) > 0 {
+				return s[len(s)-1]
+			}
+			return ""
+		},
+		"getIP": func(conn connector.Param) string {
+			return conn.Ip
+		},
+		"getPort": func(conn connector.Param) string {
+			return conn.Port
+		},
+		"getUser": func(conn connector.Param) string {
+			return conn.User
+		},
+	}).Parse(tmpl))
+
+	// render HTML
+	if err := t.Execute(reportFile, templateData); err != nil {
+		sr.logger.Error("Error generating report: " + err.Error())
+		return err
+	}
+
+	sr.logger.Sugar().Infof("Replay report saved to %s", sr.ReplayStatFileDir)
 	return nil
 }
 
@@ -1316,5 +1978,4 @@ func (sr *SQLReplayer) ShowTableJoinFrequency() map[string]uint64 {
 	sr.mutex.Unlock()
 
 	return ret
-
 }

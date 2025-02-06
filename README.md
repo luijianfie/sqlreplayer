@@ -88,7 +88,7 @@ replay相关的其他参数
 
 >-m: 回放倍数，每个raw sql执行次数，默认是1  
 -threads: 回放并发数，默认是1  
--select-only: 是否只回访select语句，默认是false
+-sql-type: 回放的语句类型，可选为query，dml，ddl，all，默认为query，仅回放query
 -charset: 默认为utf8mb4
 
 
@@ -151,8 +151,8 @@ both模式是analyze和replay阶段结合，从日志采集到raw sql之后直�
         number of times a raw sql to be executed while replaying (default 1)  
 
 只回访查询语句  
-  -select-only  
-        replay select statement only  
+  -sql-mode
+        replay statement [query|dml|ddl|all], moer than one type can be specified by comma, for example query,ddl,default:query
 
 并发数  
   -threads int  

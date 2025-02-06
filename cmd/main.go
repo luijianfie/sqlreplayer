@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const version = "2.0.0"
+const version = "2.0.1"
 
 var (
 	execType             string
@@ -30,7 +30,8 @@ var (
 	configPath           string
 	threads              int
 	multiplier           int
-	isSelectOnly         bool
+	replaySQLType        string
+	replayFilter         string
 	ifGenerateReport     bool
 	ifSaveRawSQLInReport bool
 	ifDrawPic            bool
@@ -89,7 +90,8 @@ func parseParam() *model.Config {
 	flag.IntVar(&threads, "threads", 1, "thread num while replaying")
 	flag.IntVar(&multiplier, "multi", 1, "number of times a raw sql to be executed while replaying")
 	flag.IntVar(&workNum, "worker-num", 4, "number of worker while parsing or replaying multiple files")
-	flag.BoolVar(&isSelectOnly, "select-only", false, "replay select statement only")
+	flag.StringVar(&replaySQLType, "sql-type", "query", "replay statement [query|dml|ddl|all], moer than one type can be specified by comma, for example query,ddl,default:query")
+	flag.StringVar(&replayFilter, "sql-filter", "", "regular expression to filter sql")
 	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
 	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
 	flag.BoolVar(&ifDrawPic, "draw-pic", false, "draw elasped picture for each sqlid")
@@ -138,7 +140,8 @@ func parseParam() *model.Config {
 			Charset:            charSet,
 			Thread:             threads,
 			Multi:              multiplier,
-			QueryOnly:          isSelectOnly,
+			ReplaySQLType:      replaySQLType,
+			ReplayFilter:       replayFilter,
 			SaveRawSQLInReport: ifSaveRawSQLInReport,
 			GenerateReport:     ifGenerateReport,
 			DrawPic:            ifDrawPic,

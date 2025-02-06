@@ -94,6 +94,7 @@ other parameters
 >-m: number of times a raw sql to be executed while replaying,default 1  
 -threads: thread num while replaying,default 1
 -select-only: replay select statement only,default false
+-sql-type: replay statement [query|dml|ddl|all], more than one type can be specified by comma,default value is query,in this mode, only replay query statement
 -charset: charset of connection, default utf8mb4
 
 ## both
@@ -137,8 +138,8 @@ other parameters
 
   -m int  
         number of times a raw sql to be executed while replaying (default 1)
-  -select-only  
-        replay select statement only
+  -sql-mode
+        replay statement [query|dml|ddl|all], moer than one type can be specified by comma, for example query,ddl,default:query
   -threads int  
         thread num while replaying (default 1)
   -save-raw-sql  

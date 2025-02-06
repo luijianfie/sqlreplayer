@@ -12,7 +12,8 @@ type Config struct {
 	Charset            string   `yaml:"charset"`
 	Thread             int      `yaml:"thread"`
 	Multi              int      `yaml:"multiplier"`
-	QueryOnly          bool     `yaml:"query_only"`
+	ReplaySQLType      string   `yaml:"sql_type"`
+	ReplayFilter       string   `yaml:"sql_filter"`
 	GenerateReport     bool     `yaml:"generate_report"`
 	SaveRawSQLInReport bool     `yaml:"save_raw_sql"` // save raw sql in report
 	DrawPic            bool     `yaml:"draw_pic"`

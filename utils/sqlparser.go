@@ -61,7 +61,7 @@ func SQLParser(sql string) (rets []ParserResult, err error) {
 		pr.sql = stmtNode.OriginalText()
 
 		switch stmtNode.(type) {
-		case *ast.CreateTableStmt, *ast.AlterTableStmt, *ast.DropTableStmt, *ast.TruncateTableStmt:
+		case *ast.CreateTableStmt, *ast.AlterTableStmt, *ast.DropTableStmt, *ast.TruncateTableStmt, *ast.CreateIndexStmt:
 			pr.sqlType = "DDL"
 		case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
 			pr.sqlType = "DML"
@@ -92,7 +92,7 @@ func SQLParser(sql string) (rets []ParserResult, err error) {
 
 }
 
-func IsSelectStatement(sql string) (rets []bool, err error) {
+func GetSQLStatement(sql string) (rets []string, err error) {
 	p := parser.New()
 
 	stmtNodes, _, err := p.ParseSQL(sql)
@@ -101,16 +101,16 @@ func IsSelectStatement(sql string) (rets []bool, err error) {
 	}
 
 	for _, stmtNode := range stmtNodes {
-		pr := ParserResult{}
-		pr.tableToCols = make(map[string][]string)
-		pr.sql = stmtNode.OriginalText()
 
 		switch stmtNode.(type) {
-
+		case *ast.CreateTableStmt, *ast.AlterTableStmt, *ast.DropTableStmt, *ast.TruncateTableStmt, *ast.CreateIndexStmt:
+			rets = append(rets, "DDL")
+		case *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt:
+			rets = append(rets, "DML")
 		case *ast.SelectStmt:
-			rets = append(rets, true)
+			rets = append(rets, "QUERY")
 		default:
-			rets = append(rets, false)
+			rets = append(rets, "ELSE")
 		}
 	}
 
