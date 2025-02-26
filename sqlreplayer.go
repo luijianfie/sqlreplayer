@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/dlclark/regexp2"
+	"github.com/dustin/go-humanize"
 	"github.com/luijianfie/sqlreplayer/connector"
 	"github.com/luijianfie/sqlreplayer/model"
 	"github.com/luijianfie/sqlreplayer/parser"
@@ -111,16 +112,16 @@ type task struct {
 }
 
 type sqlStatus struct {
-	sqlid       string
-	fingerprint string
+	Sqlid       string
+	Fingerprint string
 	Tablelist   string
 	Sqltype     string
-	min         uint64
-	max         uint64
-	timeElapse  uint64
-	minsql      string
-	maxsql      string
-	execution   uint64
+	Min         uint64
+	Max         uint64
+	TimeElapse  uint64
+	Minsql      string
+	Maxsql      string
+	Execution   uint64
 }
 
 type SQLReplayer struct {
@@ -149,10 +150,9 @@ type SQLReplayer struct {
 	ReplayFilter       string
 	DryRun             bool
 	DrawPic            bool
-	DeleteFile         bool // delete file from processing
-	Currency           int  //num of worker
-	Multiplier         int  //multiplier
-	Thread             int  //thread pool for one database instance
+	Currency           int //num of worker
+	Multiplier         int //multiplier
+	Thread             int //thread pool for one database instance
 	wg                 sync.WaitGroup
 
 	// timestamp for task
@@ -182,6 +182,7 @@ type SQLReplayer struct {
 	//Status
 	Status         Status
 	ReplayRowCount uint64
+	FileSize       uint64
 }
 
 func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
@@ -224,7 +225,6 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			Currency:           c.WorkerNum,
 			Multiplier:         c.Multi,
 			Thread:             c.Thread,
-			DeleteFile:         c.DeleteFile,
 
 			logger:   c.Logger,
 			stopchan: make(chan struct{}),
@@ -287,6 +287,8 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 					sr.ReplaySQLType |= DML
 				case "DDL":
 					sr.ReplaySQLType |= DDL
+				case "ELSE":
+					sr.ReplaySQLType |= ELSE
 				case "ALL":
 					sr.ReplaySQLType |= QUERY | DML | DDL | ELSE
 				}
@@ -515,11 +517,19 @@ func (sr *SQLReplayer) AddTask(fileFullPath string) {
 	t := task{taskSeq: sr.TaskSeq}
 	sr.TaskSeq++
 
+	//analyze phrase
 	if sr.ExecMode&model.ANALYZE != 0 {
 		t.parseFullPath = fileFullPath
 		t.parseFilename = filepath.Base(fileFullPath)
-		t.replayFilename = "rawsql_" + strconv.Itoa(t.taskSeq) + ".csv"
-		t.replayFullPath = filepath.Join(sr.Dir, t.replayFilename)
+
+		// for csv file, don't need to write to file again, thus , replay file is the same as parse file
+		if strings.ToUpper(sr.LogType) == "CSV" {
+			t.replayFilename = filepath.Base(fileFullPath)
+			t.replayFullPath = fileFullPath
+		} else {
+			t.replayFilename = "rawsql_" + strconv.Itoa(t.taskSeq) + ".csv"
+			t.replayFullPath = filepath.Join(sr.Dir, t.replayFilename)
+		}
 	} else {
 		t.replayFilename = filepath.Base(fileFullPath)
 		t.replayFullPath = fileFullPath
@@ -599,12 +609,13 @@ func (sr *SQLReplayer) Close() {
 // param [in] file: log file dir
 func (sr *SQLReplayer) analyze(t *task) error {
 
+	var fileSize uint64
 	file := t.parseFullPath
 	pos := t.parseFilePos
 
 	l := sr.logger
 
-	l.Sugar().Infof("begin to %s %s from pos %d", sr.ExecMode, file, pos)
+	l.Sugar().Infof("begin to analyze %s from pos %d", file, pos)
 
 	//output file in analyze phrase is replay full path in "replay" phrase.
 	rawSQLFileDir := t.replayFullPath
@@ -616,8 +627,22 @@ func (sr *SQLReplayer) analyze(t *task) error {
 	}
 	defer rawSQLFile.Close()
 
-	csvWriter := csv.NewWriter(rawSQLFile)
-	defer csvWriter.Flush()
+	rawSQLFileStat, err := rawSQLFile.Stat()
+	if err != nil {
+		sr.logger.Error(err.Error())
+		return err
+	}
+	fileSize = uint64(rawSQLFileStat.Size())
+
+	strings.ToUpper(sr.LogType)
+
+	var csvWriter *csv.Writer
+
+	//for csv file, don't need to write to file again
+	if strings.ToUpper(sr.LogType) != "CSV" {
+		csvWriter = csv.NewWriter(rawSQLFile)
+		defer csvWriter.Flush()
+	}
 
 	//save sqlid to finggerprint
 	tmpSqlID2Fingerprint := make(map[string]*sqlStatus)
@@ -643,47 +668,60 @@ func (sr *SQLReplayer) analyze(t *task) error {
 		//generate query id
 		cu.QueryID, fingerprint = utils.GetQueryID(cu.Argument)
 		cu.TableList, _ = utils.ExtractTableNames(cu.Argument)
+		ret, err := utils.GetSQLStatement(cu.Argument)
+		if err != nil {
+			cu.CommandType = "UNKNOWN"
+		} else {
+			if len(ret) > 0 {
+				cu.CommandType = ret[0]
+			} else {
+				cu.CommandType = "UNKNOWN"
+			}
+		}
 
 		//save to raw sql file
-		err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, cu.TableList, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
-		if err != nil {
-			return err
+		if csvWriter != nil {
+			err := csvWriter.Write([]string{cu.Argument, cu.QueryID, cu.Time.Format("20060102 15:04:05"), cu.CommandType, cu.TableList, strconv.FormatFloat(cu.Elapsed*1000, 'f', 2, 64)})
+			if err != nil {
+				return err
+			}
 		}
 
 		_, ok := tmpSqlID2Fingerprint[cu.QueryID]
 		if !ok {
 			s := &sqlStatus{
-				sqlid:       cu.QueryID,
-				fingerprint: fingerprint,
-				execution:   1,
-				timeElapse:  uint64(cu.Elapsed * 1000),
+				Sqlid:       cu.QueryID,
+				Fingerprint: fingerprint,
+				Sqltype:     cu.CommandType,
+				Execution:   1,
+				TimeElapse:  uint64(cu.Elapsed * 1000),
 				Tablelist:   cu.TableList,
-				min:         uint64(cu.Elapsed * 1000),
-				max:         uint64(cu.Elapsed * 1000),
+				Min:         uint64(cu.Elapsed * 1000),
+				Max:         uint64(cu.Elapsed * 1000),
 			}
 			if sr.GenerateReport {
-				s.minsql = cu.Argument
-				s.maxsql = cu.Argument
+				s.Minsql = cu.Argument
+				s.Maxsql = cu.Argument
 			}
 			tmpSqlID2Fingerprint[cu.QueryID] = s
 		} else {
 
 			elapse := uint64(cu.Elapsed * 1000)
 			s := tmpSqlID2Fingerprint[cu.QueryID]
-			s.execution++
-			s.timeElapse += elapse
+			s.Execution++
+			s.TimeElapse += elapse
 
-			if s.min > elapse {
-				s.min = elapse
+			if s.Min > elapse {
+				s.Min = elapse
 				if sr.GenerateReport {
-					s.minsql = cu.Argument
+					s.Minsql = cu.Argument
 				}
 			}
 
-			if s.max < elapse {
-				s.max = elapse
+			if s.Max < elapse {
+				s.Max = elapse
 				if sr.GenerateReport {
-					s.maxsql = cu.Argument
+					s.Maxsql = cu.Argument
 				}
 			}
 		}
@@ -695,6 +733,9 @@ func (sr *SQLReplayer) analyze(t *task) error {
 	t.parseFilePos = curPos
 
 	sr.mutex.Lock()
+
+	sr.FileSize = fileSize + sr.FileSize
+
 	if len(tmpSqlID2Fingerprint) == 0 {
 		fmt.Println(len(tmpSqlID2Fingerprint))
 	}
@@ -705,17 +746,17 @@ func (sr *SQLReplayer) analyze(t *task) error {
 		} else {
 			s := sr.SqlID2Fingerprint[k]
 
-			s.execution += v.execution
-			s.timeElapse += v.timeElapse
+			s.Execution += v.Execution
+			s.TimeElapse += v.TimeElapse
 
-			if s.min > v.min {
-				s.min = v.min
-				s.minsql = v.minsql
+			if s.Min > v.Min {
+				s.Min = v.Min
+				s.Minsql = v.Minsql
 			}
 
-			if s.max < v.max {
-				s.max = v.max
-				s.maxsql = v.maxsql
+			if s.Max < v.Max {
+				s.Max = v.Max
+				s.Maxsql = v.Maxsql
 			}
 
 		}
@@ -725,13 +766,6 @@ func (sr *SQLReplayer) analyze(t *task) error {
 
 	if err == nil {
 		t.parseStatus = true
-		if sr.DeleteFile {
-			err := os.Remove(t.parseFullPath)
-			l.Sugar().Infof("begin to remove file %s", t.parseFullPath)
-			if err != nil {
-				l.Sugar().Errorf("failed to remove file %s, err:%s", t.parseFullPath, err.Error())
-			}
-		}
 	}
 
 	return err
@@ -750,223 +784,610 @@ type SQLRecord struct {
 }
 
 func (sr *SQLReplayer) generateRawSQLReport() error {
-
 	reportFile, err := os.Create(sr.ParseStatFileDir)
 	if err != nil {
 		return err
 	}
 	defer reportFile.Close()
 
-	data := []SQLRecord{}
+	// 准备数据
+	var data []map[string]string
+	// 修改基本列顺序
+	header := []string{"sqlid", "sqltype", "fingerprint", "tablelist", "execution"}
 
-	additionalInfo := false
-
-	if sr.LogType == strings.ToUpper("slowlog") {
-		additionalInfo = true
+	// 添加统计数据结构
+	var TotalSQLs uint64
+	type Summary struct {
+		TotalSQLs      string            // 总SQL执行数
+		FingerprintNum string            // SQL指纹数量
+		SQLTypeStats   map[string]uint64 // SQL类型统计
+		TableNumsStats map[uint]uint64   // 表数量统计
+		FileCount      string            // 文件总数
+		TotalFileSize  string            // 文件累计大小
 	}
 
+	// 计算统计数据
+	summary := Summary{
+		SQLTypeStats:   make(map[string]uint64),
+		TableNumsStats: make(map[uint]uint64),
+	}
+
+	summary.FingerprintNum = humanize.Comma(int64(len(sr.SqlID2Fingerprint)))
+	sr.mutex.Unlock()
+	tableMap := sr.ShowTableJoinFrequency()
+	sr.mutex.Lock()
+	for k, v := range tableMap {
+		strs := strings.Split(k, ",")
+		count := uint(0)
+		for _, str := range strs {
+			if len(strings.TrimSpace(str)) > 0 {
+				count++
+			}
+		}
+		summary.TableNumsStats[count] += v
+	}
+
+	// 如果是慢日志，添加性能相关的列
+	additionalInfo := sr.LogType == strings.ToUpper("slowlog")
+	if additionalInfo {
+		header = append(header, "min(ms)", "min_sql", "max(ms)", "max_sql", "avg(ms)")
+	}
+
+	// 构造数据
 	for sqlID, sqlStatus := range sr.SqlID2Fingerprint {
 
-		record := SQLRecord{
-			SQLID:       sqlID,
-			Fingerprint: sqlStatus.fingerprint,
-			TableList:   sqlStatus.Tablelist,
-			Execution:   strconv.FormatUint(sqlStatus.execution, 10),
+		row := map[string]string{
+			"sqlid":       sqlID,
+			"sqltype":     sqlStatus.Sqltype,
+			"fingerprint": sqlStatus.Fingerprint,
+			"tablelist":   sqlStatus.Tablelist,
+			"execution":   strconv.FormatUint(sqlStatus.Execution, 10),
 		}
-
 		if additionalInfo {
-			record.Avg = strconv.FormatFloat(float64(sqlStatus.timeElapse)/float64(sqlStatus.execution), 'f', 2, 64)
-			record.Min = strconv.FormatUint(sqlStatus.min, 10)
-			record.MinSQL = sqlStatus.minsql
-			record.Max = strconv.FormatUint(sqlStatus.max, 10)
-			record.MaxSQL = sqlStatus.maxsql
+			avg := float64(sqlStatus.TimeElapse) / float64(sqlStatus.Execution)
+			row["min"] = strconv.FormatUint(sqlStatus.Min, 10)
+			row["min_sql"] = sqlStatus.Minsql
+			row["max"] = strconv.FormatUint(sqlStatus.Max, 10)
+			row["max_sql"] = sqlStatus.Maxsql
+			row["avg"] = strconv.FormatFloat(avg, 'f', 1, 64)
 		}
 
-		data = append(data, record)
+		data = append(data, row)
+
+		TotalSQLs += sqlStatus.Execution
+		summary.SQLTypeStats[sqlStatus.Sqltype] += sqlStatus.Execution
+
 	}
 
+	summary.TotalSQLs = humanize.Comma(int64(TotalSQLs))
+
+	// 计算文件总数和文件累计大小
+	summary.FileCount = humanize.Comma(int64(sr.TaskSeq + 1))
+	summary.TotalFileSize = humanize.Bytes(sr.FileSize)
+
+	// HTML 模板
 	const tmpl = `
     <!DOCTYPE html>
     <html lang="en">
     <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>SQL Report</title>
-      <style>
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th, td {
-          border: 1px solid #ccc;
-          padding: 8px;
-          text-align: left; 
-          word-wrap: break-word;
-        }
-        th {
-          background-color: #f4f4f4;
-          cursor: pointer;
-        }
-        .long-sql {
-          max-height: 60px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          position: relative;
-          width: 300px; 
-        }
-        .long-sql.expanded {
-          max-height: none;
-          white-space: pre-wrap;
-          word-break: break-word;
-        }
-        .toggle {
-          cursor: pointer;
-          color: blue;
-          text-decoration: underline;
-        }
-        
-        td, th {
-          text-align: left; 
-        }
-        .min-max-column {
-          width: 120px;
-        }
-        .fingerprint-column, .min-sql-column, .max-sql-column {
-          width: 200px;
-        }
-        .hidden {
-          display: none;
-        }
-        .control-panel {
-          margin-bottom: 10px;
-        }
-        .control-panel label {
-          margin-right: 15px;
-        }
-      </style>
+        <meta charset="UTF-8">
+        <title>SQL Analysis Report</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background-color: white;
+                border-radius: 8px;
+                padding: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .control-panel {
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f8f9fa;
+                border-radius: 4px;
+            }
+            .table-container {
+                overflow-x: auto;
+                max-height: 80vh;
+                position: relative;
+            }
+            table { 
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }
+            thead {
+                position: sticky;
+                top: 0;
+                background-color: #f8f9fa;
+                z-index: 1;
+            }
+            th, td { 
+                padding: 12px;
+                text-align: left;
+                border: 1px solid #dee2e6;
+            }
+            th { 
+                background-color: #f8f9fa;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            th:hover {
+                background-color: #e9ecef;
+            }
+            .sql-cell {
+                max-width: 300px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-family: monospace;
+            }
+            .sql-cell.expanded {
+                max-width: none;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            .toggle-btn {
+                display: block;
+                color: #0d6efd;
+                cursor: pointer;
+                font-size: 0.9em;
+                margin-top: 4px;
+            }
+            .toggle-btn:hover {
+                text-decoration: underline;
+            }
+            tr:nth-child(even) {
+                background-color: #f8f9fa;
+            }
+            tr:hover {
+                background-color: #f2f2f2;
+            }
+            .search-box {
+                margin: 10px 0;
+                padding: 8px;
+                width: 200px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            .summary-section {
+                margin: 20px 0;
+                padding: 20px;
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .summary-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+                margin-bottom: 20px;
+            }
+            .summary-item {
+                padding: 15px;
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            }
+            .summary-item h4 {
+                margin: 0 0 10px 0;
+                color: #2c3e50;
+            }
+            .summary-value {
+                font-size: 24px;
+                font-weight: bold;
+                color: #0d6efd;
+            }
+            .chart-container {
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                padding: 15px;
+                margin: 20px 0;
+                width: 100%;
+            }
+            .chart-wrapper {
+                width: 400px;
+                margin: 0 auto;
+            }
+            /* SQL 类型样式 */
+            .sqltype-cell {
+                font-weight: 500;
+                padding: 4px 8px;
+                border-radius: 4px;
+                display: inline-block;
+                font-size: 0.9em;
+            }
+            .sqltype-QUERY { 
+                background-color: #cce5ff; 
+                color: #004085; 
+            }
+            .sqltype-DML { 
+                background-color: #d4edda; 
+                color: #155724; 
+            }
+            .sqltype-DDL { 
+                background-color: #fff3cd; 
+                color: #856404; 
+            }
+            .sqltype-ELSE { 
+                background-color: #e2e3e5; 
+                color: #383d41; 
+            }
+            .sqltype-UNKNOWN { 
+                background-color: #f8d7da; 
+                color: #721c24; 
+            }
+            .charts-row {
+                display: flex;
+                justify-content: space-between;
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .chart-container {
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                padding: 15px;
+                flex: 1;
+            }
+            .chart-wrapper {
+                width: 100%;
+                height: 300px;
+                margin: 0 auto;
+            }
+        </style>
     </head>
     <body>
-      <h1>SQL Execution Report </h1>
-      <div class="control-panel">
-        <label><input type="checkbox" class="column-toggle" data-column="0" checked> SQL ID</label>
-        <label><input type="checkbox" class="column-toggle" data-column="1" checked> Fingerprint</label>
-        <label><input type="checkbox" class="column-toggle" data-column="2" checked> Tables</label>
-        <label><input type="checkbox" class="column-toggle" data-column="3" checked> Min (ms)</label>
-        <label><input type="checkbox" class="column-toggle" data-column="4" checked> Min SQL</label>
-        <label><input type="checkbox" class="column-toggle" data-column="5" checked> Max (ms)</label>
-        <label><input type="checkbox" class="column-toggle" data-column="6" checked> Max SQL</label>
-        <label><input type="checkbox" class="column-toggle" data-column="7" checked> Avg (ms)</label>
-        <label><input type="checkbox" class="column-toggle" data-column="8" checked> Execution</label>
-      </div>
-      <table id="sqlTable">
-        <thead>
-          <tr>
-            <th onclick="sortTable(0)">SQL ID</th>
-            <th class="fingerprint-column">Fingerprint</th>
-            <th>Tables</th>
-            <th class="min-max-column" onclick="sortTable(3)">Min (ms)</th>
-            <th class="min-sql-column">Min SQL</th>
-            <th class="min-max-column" onclick="sortTable(5)">Max (ms)</th>
-            <th class="max-sql-column">Max SQL</th>
-            <th class="min-max-column" onclick="sortTable(7)">Avg (ms)</th>
-            <th onclick="sortTable(8, true)">Execution</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{range .}}
-          <tr>
-            <td>{{.SQLID}}</td>
-            <td class="fingerprint-column">
-                <div class="long-sql" data-content="{{.Fingerprint}}">
-                    {{.Fingerprint}}
-                </div>
-                <span class="toggle" onclick="toggleDetails(this)">Expand</span>
-            </td>
-            <td>
-                <div class="long-sql" data-content="{{.TableList}}">
-                    {{.TableList}}
-                </div>
-                <span class="toggle" onclick="toggleDetails(this)">Expand</span>
-            </td>
-            <td class="min-max-column">{{.Min}}</td>
-            <td class="min-sql-column">
-              <div class="long-sql" data-content="{{.MinSQL}}">
-                {{.MinSQL}}
-              </div>
-              <span class="toggle" onclick="toggleDetails(this)">Expand</span>
-            </td>
-            <td class="min-max-column">{{.Max}}</td>
-            <td class="max-sql-column">
-              <div class="long-sql" data-content="{{.MaxSQL}}">
-                {{.MaxSQL}}
-              </div>
-              <span class="toggle" onclick="toggleDetails(this)">Expand</span>
-            </td>
-            <td class="min-max-column">{{.Avg}}</td>
-            <td>{{.Execution}}</td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
-      <script>
-        
-        function toggleDetails(toggleButton) {
-          const longSqlDiv = toggleButton.previousElementSibling;
-          const content = longSqlDiv.dataset.content;
-    
-          if (content.length > 100) {  
-            if (longSqlDiv.classList.contains('expanded')) {
-              longSqlDiv.classList.remove('expanded');
-              toggleButton.textContent = 'Expand';
-            } else {
-              longSqlDiv.classList.add('expanded');
-              toggleButton.textContent = 'Collapse';
-            }
-          } else {
-            toggleButton.style.display = 'none';  
-          }
-        }
-    
-        function sortTable(n, isNumeric = false) {
-          const table = document.getElementById('sqlTable');
-          const rows = Array.from(table.rows).slice(1);
-          const dir = table.dataset.sortDir === 'asc' ? 'desc' : 'asc';
-          rows.sort((a, b) => {
-            const x = isNumeric ? parseInt(a.cells[n].innerText, 10) : a.cells[n].innerText.toLowerCase();
-            const y = isNumeric ? parseInt(b.cells[n].innerText, 10) : b.cells[n].innerText.toLowerCase();
-            return dir === 'asc' ? x - y : y - x;
-          });
-          table.dataset.sortDir = dir;
-          const tbody = table.tBodies[0];
-          rows.forEach(row => tbody.appendChild(row));
-        }
-    
-        document.querySelectorAll('.column-toggle').forEach(toggle => {
-          toggle.addEventListener('change', function () {
-            const column = this.dataset.column;
-            const isChecked = this.checked;
-            const table = document.getElementById('sqlTable');
-    
-            // 控制表头和每行对应列的显示/隐藏
-            table.querySelectorAll(` + "`th:nth-child(${+column + 1}), td:nth-child(${+column + 1})`" + `)
-              .forEach(cell => {
-                cell.style.display = isChecked ? '' : 'none';
-              });
-          });
-        });
-      </script>
-    </body>
-    </html>
-    `
+        <div class="container">
+            <h1>SQL Analysis Report</h1>
 
-	t := template.Must(template.New("report").Parse(tmpl))
-	if err := t.Execute(reportFile, data); err != nil {
+            <!-- Add Summary Section -->
+            <div class="summary-section">
+                <h3>Analysis Summary</h3>
+                <div class="summary-grid">
+		          	<div class="summary-item">
+                        <h4>File Nums</h4>
+                        <div class="summary-value">{{.Summary.FileCount}}</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>File Size</h4>
+                        <div class="summary-value">{{.Summary.TotalFileSize}}</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>SQL Fingerprints</h4>
+                        <div class="summary-value">{{.Summary.FingerprintNum}}</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>Total SQL Executions</h4>
+                        <div class="summary-value">{{.Summary.TotalSQLs}}</div>
+                    </div>
+                </div>
+                
+                <div class="charts-row">
+                    <!-- SQL Type Distribution Chart -->
+                    <div class="chart-container">
+                        <h4 style="margin: 0 0 15px 0; color: #2c3e50;">SQL Type Distribution</h4>
+                        <div class="chart-wrapper">
+                            <canvas id="sqlTypeChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Table Count Distribution Chart -->
+                    <div class="chart-container">
+                        <h4 style="margin: 0 0 15px 0; color: #2c3e50;">Nums of Join Tables Distribution</h4>
+                        <div class="chart-wrapper">
+                            <canvas id="tableCountChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-panel">
+                <h3>Display Settings</h3>
+                
+                <div>
+                    <input type="text" class="search-box" id="searchInput" placeholder="Search...">
+                </div>
+                <div>
+                    <button onclick="toggleAllColumns(true)">Show All Columns</button>
+                    <button onclick="toggleAllColumns(false)">Hide All Columns</button>
+                </div>
+                <div id="columnToggles">
+                    <!-- Column toggle buttons will be generated by JS -->
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table id="sqlTable">
+                    <thead>
+                        <tr>
+                            {{range $index, $header := .Header}}
+                                <th onclick="sortTable({{$index}})" 
+                                    data-column="{{$header}}">
+                                    {{$header}}
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            {{end}}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $row := .Data}}
+                            <tr>
+                                {{range $header := $.Header}}
+                                    <td>
+                                        {{if or (hasSuffix $header "_sql") (eq $header "fingerprint") (eq $header "tablelist")}}
+                                            <div class="sql-cell">{{index $row $header}}</div>
+                                            {{if ne (index $row $header) ""}}
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            {{end}}
+                                        {{else if eq $header "sqltype"}}
+                                            <span class="sqltype-cell sqltype-{{index $row $header}}">{{index $row $header}}</span>
+                                        {{else}}
+                                            {{index $row $header}}
+                                        {{end}}
+                                    </td>
+                                {{end}}
+                            </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <script>
+            // Toggle column visibility
+            function toggleColumn(columnName) {
+                const table = document.getElementById('sqlTable');
+                const index = Array.from(table.rows[0].cells).findIndex(
+                    cell => cell.dataset.column === columnName
+                );
+                if (index > -1) {
+                    const isVisible = document.querySelector(` + "`" + `.column-toggle[data-column="${columnName}"]` + "`" + `).checked;
+                    Array.from(table.rows).forEach(row => {
+                        const cell = row.cells[index];
+                        cell.style.display = isVisible ? '' : 'none';
+                    });
+                }
+            }
+
+            // Toggle all columns
+            function toggleAllColumns(show) {
+                const checkboxes = document.querySelectorAll('.column-toggle');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = show;
+                    toggleColumn(checkbox.dataset.column);
+                });
+            }
+
+            // Generate column toggle buttons
+            function generateColumnToggles() {
+                const headers = Array.from(document.querySelectorAll('th')).map(th => th.dataset.column);
+                const container = document.getElementById('columnToggles');
+                
+                const groupDiv = document.createElement('div');
+                groupDiv.style.marginBottom = '10px';
+                
+                headers.forEach(column => {
+                    const label = document.createElement('label');
+                    label.style.marginRight = '15px';
+                    
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = true;
+                    checkbox.className = 'column-toggle';
+                    checkbox.dataset.column = column;
+                    checkbox.onchange = () => toggleColumn(column);
+                    
+                    label.appendChild(checkbox);
+                    label.appendChild(document.createTextNode(column));
+                    groupDiv.appendChild(label);
+                });
+
+                container.appendChild(groupDiv);
+            }
+
+            // Table sorting
+            function sortTable(colIndex) {
+                const table = document.getElementById('sqlTable');
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.rows);
+                const th = table.rows[0].cells[colIndex];
+                const isAsc = th.classList.contains('asc');
+
+                // Clear all sort indicators
+                table.querySelectorAll('th').forEach(header => {
+                    header.classList.remove('asc', 'desc');
+                });
+
+                // Set new sort direction
+                th.classList.add(isAsc ? 'desc' : 'asc');
+
+                rows.sort((a, b) => {
+                    let aVal = a.cells[colIndex].innerText.trim();
+                    let bVal = b.cells[colIndex].innerText.trim();
+
+                    // Try numeric sort
+                    const aNum = parseFloat(aVal);
+                    const bNum = parseFloat(bVal);
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return isAsc ? bNum - aNum : aNum - bNum;
+                    }
+
+                    // String sort
+                    return isAsc ? 
+                        bVal.localeCompare(aVal) : 
+                        aVal.localeCompare(bVal);
+                });
+
+                // Reinsert sorted rows
+                rows.forEach(row => tbody.appendChild(row));
+            }
+
+            // Toggle SQL cell expand/collapse
+            function toggleCell(btn) {
+                const cell = btn.previousElementSibling;
+                if (cell.classList.contains('expanded')) {
+                    cell.classList.remove('expanded');
+                    btn.textContent = 'Expand';
+                } else {
+                    cell.classList.add('expanded');
+                    btn.textContent = 'Collapse';
+                }
+            }
+
+            // Search functionality
+            document.getElementById('searchInput').addEventListener('input', function(e) {
+                const searchText = e.target.value.toLowerCase();
+                const tbody = document.querySelector('tbody');
+                Array.from(tbody.rows).forEach(row => {
+                    const text = Array.from(row.cells)
+                        .map(cell => cell.textContent)
+                        .join(' ')
+                        .toLowerCase();
+                    row.style.display = text.includes(searchText) ? '' : 'none';
+                });
+            });
+
+            // Add Chart Initialization
+            document.addEventListener('DOMContentLoaded', function() {
+                generateColumnToggles();
+                
+                // Initialize SQL Type Chart
+                const ctx = document.getElementById('sqlTypeChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: {{.SQLTypeLabels}},
+                        datasets: [{
+                            data: {{.SQLTypeValues}},
+                            backgroundColor: [
+                                '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
+                                '#858796', '#5a5c69', '#2c9faf', '#3c5a9a', '#e83e8c'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        layout: {
+                            padding: {
+                                left: 20,
+                                right: 20
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                align: 'center'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const label = context.label || '';
+                                        const value = context.parsed;
+                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                        const percentage = ((value * 100) / total).toFixed(1);
+                                        return ` + "`${label}: ${value} (${percentage}%)`" + `;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Initialize Table Count Chart
+                const ctxTable = document.getElementById('tableCountChart').getContext('2d');
+                new Chart(ctxTable, {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys({{.Summary.TableNumsStats}}),
+                        datasets: [{
+                            label: 'SQL Executions',
+                            data: Object.values({{.Summary.TableNumsStats}}),
+                            backgroundColor: '#36b9cc',
+                            borderColor: '#2c9faf',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                type: 'logarithmic',
+                                title: {
+                                    display: true,
+                                    text: 'SQL Count (log scale)'
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Number of Tables'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return ` + "`SQL Count: ${context.parsed.y}`" + `;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>`
+
+	// 准备图表数据
+	var sqlTypeLabels []string
+	var sqlTypeValues []uint64
+	for sqlType, count := range summary.SQLTypeStats {
+		sqlTypeLabels = append(sqlTypeLabels, sqlType)
+		sqlTypeValues = append(sqlTypeValues, count)
+	}
+
+	// 准备模板数据
+	templateData := struct {
+		Header        []string
+		Data          []map[string]string
+		Summary       Summary
+		SQLTypeLabels []string
+		SQLTypeValues []uint64
+	}{
+		Header:        header,
+		Data:          data,
+		Summary:       summary,
+		SQLTypeLabels: sqlTypeLabels,
+		SQLTypeValues: sqlTypeValues,
+	}
+
+	// 解析模板
+	t := template.Must(template.New("report").Funcs(template.FuncMap{
+		"hasSuffix": strings.HasSuffix,
+	}).Parse(tmpl))
+
+	// 渲染 HTML
+	if err := t.Execute(reportFile, templateData); err != nil {
+		sr.logger.Error("Error generating report: " + err.Error())
 		return err
 	}
 
-	sr.logger.Sugar().Infof("raw sql report saved to %s", sr.ParseStatFileDir)
+	sr.logger.Sugar().Infof("Raw SQL report saved to %s", sr.ParseStatFileDir)
 	return nil
-
 }
 
 func (sr *SQLReplayer) replayRawSQL(t *task) error {
@@ -1131,36 +1552,36 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 
 						if sr.QueryID2RelayStats[sqlid][ind] == nil {
 							s := &sqlStatus{
-								sqlid:       sqlid,
-								fingerprint: fingerprint,
+								Sqlid:       sqlid,
+								Fingerprint: fingerprint,
 								Tablelist:   tablelist,
-								execution:   1,
-								timeElapse:  uint64(elapsedMilliseconds),
-								min:         uint64(elapsedMilliseconds),
-								max:         uint64(elapsedMilliseconds),
+								Execution:   1,
+								TimeElapse:  uint64(elapsedMilliseconds),
+								Min:         uint64(elapsedMilliseconds),
+								Max:         uint64(elapsedMilliseconds),
 							}
 
 							if sr.SaveRawSQLInReport {
-								s.minsql = sql
-								s.maxsql = sql
+								s.Minsql = sql
+								s.Maxsql = sql
 							}
 							sr.QueryID2RelayStats[sqlid][ind] = s
 						} else {
 							s := sr.QueryID2RelayStats[sqlid][ind]
-							s.execution += 1
-							s.timeElapse += uint64(elapsedMilliseconds)
+							s.Execution += 1
+							s.TimeElapse += uint64(elapsedMilliseconds)
 
-							if s.min > uint64(elapsedMilliseconds) {
-								s.min = uint64(elapsedMilliseconds)
+							if s.Min > uint64(elapsedMilliseconds) {
+								s.Min = uint64(elapsedMilliseconds)
 								if sr.SaveRawSQLInReport {
-									s.minsql = sql
+									s.Minsql = sql
 								}
 							}
 
-							if s.max < uint64(elapsedMilliseconds) {
-								s.max = uint64(elapsedMilliseconds)
+							if s.Max < uint64(elapsedMilliseconds) {
+								s.Max = uint64(elapsedMilliseconds)
 								if sr.SaveRawSQLInReport {
-									s.maxsql = sql
+									s.Maxsql = sql
 								}
 							}
 						}
@@ -1186,14 +1607,6 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 	if status == 1 {
 		sr.logger.Sugar().Infof("sql replay finish for file %s,time elasped %fs.", t.replayFullPath, elapsed)
 		t.replayStatus = true
-
-		if sr.DeleteFile {
-			err := os.Remove(t.replayFullPath)
-			sr.logger.Sugar().Infof("begin to remove file %s", t.replayFullPath)
-			if err != nil {
-				sr.logger.Sugar().Errorf("failed to remove file %s, err:%s", t.replayFullPath, err.Error())
-			}
-		}
 
 	} else {
 		sr.logger.Sugar().Infof("file %s replay stop.", t.replayFullPath, elapsed)
@@ -1266,14 +1679,14 @@ func (sr *SQLReplayer) generateReplayReport() error {
 
 		row := map[string]string{
 			"sqlid":       sqlid,
-			"fingerprint": dbsToStats[0].fingerprint,
+			"fingerprint": dbsToStats[0].Fingerprint,
 			"tablelist":   dbsToStats[0].Tablelist,
 		}
 
 		// calculate average response time for baseline conn(conn_0)
 		var baselineAvg float64
-		if dbsToStats[0] != nil && dbsToStats[0].execution > 0 {
-			baselineAvg = float64(dbsToStats[0].timeElapse) / float64(dbsToStats[0].execution)
+		if dbsToStats[0] != nil && dbsToStats[0].Execution > 0 {
+			baselineAvg = float64(dbsToStats[0].TimeElapse) / float64(dbsToStats[0].Execution)
 		}
 
 		for i := 0; i < len(dbsToStats); i++ {
@@ -1283,11 +1696,11 @@ func (sr *SQLReplayer) generateReplayReport() error {
 
 			// accumulate stats data
 			summary.TotalSQLs[i]++
-			summary.TotalTime[i] += dbsToStats[i].timeElapse
-			summary.TotalExec[i] += dbsToStats[i].execution
+			summary.TotalTime[i] += dbsToStats[i].TimeElapse
+			summary.TotalExec[i] += dbsToStats[i].Execution
 
 			// calculate average response time for current sql in current conn
-			currentAvg := float64(dbsToStats[i].timeElapse) / float64(dbsToStats[i].execution)
+			currentAvg := float64(dbsToStats[i].TimeElapse) / float64(dbsToStats[i].Execution)
 
 			// if not baseline conn and better performance, increase better count
 			if i > 0 && currentAvg < baselineAvg {
@@ -1295,12 +1708,12 @@ func (sr *SQLReplayer) generateReplayReport() error {
 			}
 
 			prefix := fmt.Sprintf("conn_%d_", i)
-			row[prefix+"min"] = strconv.FormatUint(dbsToStats[i].min, 10)
-			row[prefix+"min_sql"] = dbsToStats[i].minsql
-			row[prefix+"max"] = strconv.FormatUint(dbsToStats[i].max, 10)
-			row[prefix+"max_sql"] = dbsToStats[i].maxsql
+			row[prefix+"min"] = strconv.FormatUint(dbsToStats[i].Min, 10)
+			row[prefix+"min_sql"] = dbsToStats[i].Minsql
+			row[prefix+"max"] = strconv.FormatUint(dbsToStats[i].Max, 10)
+			row[prefix+"max_sql"] = dbsToStats[i].Maxsql
 			row[prefix+"avg"] = strconv.FormatFloat(currentAvg, 'f', 1, 64)
-			row[prefix+"execution"] = strconv.FormatUint(dbsToStats[i].execution, 10)
+			row[prefix+"execution"] = strconv.FormatUint(dbsToStats[i].Execution, 10)
 		}
 		data = append(data, row)
 	}
@@ -1544,6 +1957,24 @@ func (sr *SQLReplayer) generateReplayReport() error {
             .better-count {
                 color: #198754;
             }
+            .charts-row {
+                display: flex;
+                justify-content: space-between;
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .chart-container {
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                padding: 15px;
+                flex: 1;
+            }
+            .chart-wrapper {
+                width: 100%;
+                height: 300px;
+                margin: 0 auto;
+            }
         </style>
     </head>
     <body>
@@ -1650,6 +2081,8 @@ func (sr *SQLReplayer) generateReplayReport() error {
                                             {{if ne (index $row $header) ""}}
                                                 <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
                                             {{end}}
+                                        {{else if eq $header "sqltype"}}
+                                            <span class="sqltype-cell sqltype-{{index $row $header}}">{{index $row $header}}</span>
                                         {{else}}
                                             {{index $row $header}}
                                         {{end}}
@@ -1859,6 +2292,7 @@ func (sr *SQLReplayer) generateReplayReport() error {
                 // Calculate and show performance differences
                 const rows = document.querySelectorAll('tbody tr');
                 rows.forEach(calculatePerformanceDiff);
+
             });
         </script>
     </body>
@@ -1918,6 +2352,7 @@ type jobStatus struct {
 	ExecMode     string
 	TaskNumTotal int
 	Finish       int
+	FileSize     uint64
 }
 
 func (sr *SQLReplayer) ShowJobStatus() jobStatus {
@@ -1936,6 +2371,8 @@ func (sr *SQLReplayer) ShowJobStatus() jobStatus {
 	} else {
 		js.ExecMode = "replay"
 	}
+
+	js.FileSize = sr.FileSize
 
 	for _, t := range sr.tasks {
 
@@ -1969,9 +2406,9 @@ func (sr *SQLReplayer) ShowTableJoinFrequency() map[string]uint64 {
 	for _, sqlStatus := range sr.SqlID2Fingerprint {
 		_, ok := ret[sqlStatus.Tablelist]
 		if ok {
-			ret[sqlStatus.Tablelist] = sqlStatus.execution + ret[sqlStatus.Tablelist]
+			ret[sqlStatus.Tablelist] = sqlStatus.Execution + ret[sqlStatus.Tablelist]
 		} else {
-			ret[sqlStatus.Tablelist] = sqlStatus.execution
+			ret[sqlStatus.Tablelist] = sqlStatus.Execution
 		}
 	}
 

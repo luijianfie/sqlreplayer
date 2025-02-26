@@ -18,8 +18,7 @@ type Config struct {
 	SaveRawSQLInReport bool     `yaml:"save_raw_sql"` // save raw sql in report
 	DrawPic            bool     `yaml:"draw_pic"`
 	DryRun             bool     `yaml:"dry_run"`
-	WorkerNum          int      `yaml:"worker_num"`  // number of workers
-	DeleteFile         bool     `yaml:"delete_file"` // if delete source file after processing
+	WorkerNum          int      `yaml:"worker_num"` // number of workers
 
 	Dir      string `yaml:"save_dir"`
 	Metafile string `yaml:"metafile"`
