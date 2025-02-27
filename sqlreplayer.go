@@ -418,6 +418,20 @@ func (sr *SQLReplayer) Start() {
 
 						sr.mutex.Lock()
 						task := sr.tasks[t]
+
+						fileName := ""
+						if len(task.parseFilename) > 0 {
+							fileName = task.parseFullPath
+						} else {
+							fileName = task.replayFullPath
+						}
+
+						//get file size of file
+						fileStat, err := os.Stat(fileName)
+						if err == nil {
+							sr.FileSize = sr.FileSize + uint64(fileStat.Size())
+						}
+
 						sr.mutex.Unlock()
 
 						//file parse pharse
@@ -609,7 +623,6 @@ func (sr *SQLReplayer) Close() {
 // param [in] file: log file dir
 func (sr *SQLReplayer) analyze(t *task) error {
 
-	var fileSize uint64
 	file := t.parseFullPath
 	pos := t.parseFilePos
 
@@ -626,13 +639,6 @@ func (sr *SQLReplayer) analyze(t *task) error {
 		return err
 	}
 	defer rawSQLFile.Close()
-
-	rawSQLFileStat, err := rawSQLFile.Stat()
-	if err != nil {
-		sr.logger.Error(err.Error())
-		return err
-	}
-	fileSize = uint64(rawSQLFileStat.Size())
 
 	strings.ToUpper(sr.LogType)
 
@@ -733,8 +739,6 @@ func (sr *SQLReplayer) analyze(t *task) error {
 	t.parseFilePos = curPos
 
 	sr.mutex.Lock()
-
-	sr.FileSize = fileSize + sr.FileSize
 
 	if len(tmpSqlID2Fingerprint) == 0 {
 		fmt.Println(len(tmpSqlID2Fingerprint))
