@@ -109,8 +109,17 @@ both模式是analyze和replay阶段结合，从日志采集到raw sql之后直�
 
 cd cmd  
 make  
-./sqlreplayer -config config_analyze_demo.yaml  
-> Using configuration file: config_analyze_demo.yaml  
+
+## Analyze 演示
+
+### 步骤 1: 执行分析命令
+```bash
+./sqlreplayer -config config_analyze_demo.yaml
+```
+
+执行后将看到如下输出：
+```
+Using configuration file: config_analyze_demo.yaml  
 2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 3 start.  
 2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 1 start.  
 2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 2 start.  
@@ -132,8 +141,27 @@ make
 2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:610  Heap Memory System: 7648 KB  
 2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:611  MaxHeapAlloc: 3128 KB  
 2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:613  exit.  
+```
 
-更多用法可以参考demo.yaml文件的配置
+## Replay 演示
+
+### 步骤 1: 配置数据源
+修改配置文件中的数据源配置，可以参照如下格式：
+```yaml
+conns:
+  - "mysql:test:test:10.10.218.57:3306:test"
+  - "mysql:test:test:10.10.218.57:3306:test_2"
+```
+
+### 步骤 2: 初始化数据库
+在数据库中执行初始化脚本 `init.sql`，确认库中 `users` 表已创建完成。
+
+### 步骤 3: 执行回放命令
+```bash
+./sqlreplayer -config config_replay_demo.yaml
+```
+
+更多用法可以参考下面的参数说明
 
 
 # 参数说明
