@@ -1,0 +1,36 @@
+# 执行模式: analyze, replay, both
+exec_type: "analyze"
+
+# 需要分析的文件列表
+file_list: 
+  - "general_sample.log"
+  - "general_sample_2.log"
+
+# 日志类型: slowlog, genlog, csv
+log_type: "genlog"
+
+# 分析的时间范围（可选）
+begin_time: ""  # 格式: "2024-01-01 00:00:00"
+end_time: ""    # 格式: "2024-12-31 23:59:59"
+
+# 输出目录
+save_dir: "./test/"
+
+# analyze阶段生成报告
+generate_report: true
+
+# 保存原始SQL
+save_raw_sql: true
+
+# 其他可选配置
+charset: "utf8mb4"
+thread: 4          # 每个worker的线程数
+multiplier: 1      # 执行倍数
+worker_num: 4      # worker数量（文件并行处理度）
+dry_run: false     # 是否只进行预检查不实际执行
+
+# replay模式的相关配置（当前未使用）
+sql_type: "query"       # 要回放的SQL类型，可选值：query, ddl, dml, all
+sql_filter: "SQL_NO_CACHE"     # SQL过滤条件，支持正则
+conns: []          # 数据库连接信息
+

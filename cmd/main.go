@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const version = "2.0.2"
+const version = "3.0.1"
 
 var (
 	execType             string
@@ -34,7 +34,6 @@ var (
 	replayFilter         string
 	ifGenerateReport     bool
 	ifSaveRawSQLInReport bool
-	ifDrawPic            bool
 	ifDryRun             bool
 	verbose              bool
 	dir                  string
@@ -94,7 +93,6 @@ func parseParam() *model.Config {
 	flag.StringVar(&replayFilter, "sql-filter", "", "regular expression to filter sql")
 	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
 	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
-	flag.BoolVar(&ifDrawPic, "draw-pic", false, "draw elasped picture for each sqlid")
 	flag.BoolVar(&ifDryRun, "dry-run", false, "replay raw sql without collecting any extra info")
 	flag.BoolVar(&verbose, "v", false, "display version information")
 	flag.StringVar(&configPath, "config", "", "Path to the configuration file")
@@ -144,7 +142,6 @@ func parseParam() *model.Config {
 			ReplayFilter:       replayFilter,
 			SaveRawSQLInReport: ifSaveRawSQLInReport,
 			GenerateReport:     ifGenerateReport,
-			DrawPic:            ifDrawPic,
 			DryRun:             ifDryRun,
 			Dir:                dir,
 			WorkerNum:          workNum,

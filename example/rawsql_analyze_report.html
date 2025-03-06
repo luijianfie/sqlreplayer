@@ -1,0 +1,1750 @@
+
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>SQL Analysis Report</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                margin: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background-color: white;
+                border-radius: 8px;
+                padding: 20px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .control-panel {
+                margin-bottom: 20px;
+                padding: 15px;
+                background-color: #f8f9fa;
+                border-radius: 4px;
+            }
+            .table-container {
+                overflow-x: auto;
+                max-height: 80vh;
+                position: relative;
+            }
+            table { 
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 10px;
+            }
+            thead {
+                position: sticky;
+                top: 0;
+                background-color: #f8f9fa;
+                z-index: 1;
+            }
+            th, td { 
+                padding: 12px;
+                text-align: left;
+                border: 1px solid #dee2e6;
+            }
+            th { 
+                background-color: #f8f9fa;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            th:hover {
+                background-color: #e9ecef;
+            }
+            .sql-cell {
+                max-width: 300px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-family: monospace;
+            }
+            .sql-cell.expanded {
+                max-width: none;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            .toggle-btn {
+                display: block;
+                color: #0d6efd;
+                cursor: pointer;
+                font-size: 0.9em;
+                margin-top: 4px;
+            }
+            .toggle-btn:hover {
+                text-decoration: underline;
+            }
+            tr:nth-child(even) {
+                background-color: #f8f9fa;
+            }
+            tr:hover {
+                background-color: #f2f2f2;
+            }
+            .search-box {
+                margin: 10px 0;
+                padding: 8px;
+                width: 200px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            .summary-section {
+                margin: 20px 0;
+                padding: 20px;
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .summary-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+                margin-bottom: 20px;
+            }
+            .summary-item {
+                padding: 15px;
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            }
+            .summary-item h4 {
+                margin: 0 0 10px 0;
+                color: #2c3e50;
+            }
+            .summary-value {
+                font-size: 24px;
+                font-weight: bold;
+                color: #0d6efd;
+            }
+            .chart-container {
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                padding: 15px;
+                margin: 20px 0;
+                width: 100%;
+            }
+            .chart-wrapper {
+                width: 400px;
+                margin: 0 auto;
+            }
+             
+            .sqltype-cell {
+                font-weight: 500;
+                padding: 4px 8px;
+                border-radius: 4px;
+                display: inline-block;
+                font-size: 0.9em;
+            }
+            .sqltype-QUERY { 
+                background-color: #cce5ff; 
+                color: #004085; 
+            }
+            .sqltype-DML { 
+                background-color: #d4edda; 
+                color: #155724; 
+            }
+            .sqltype-DDL { 
+                background-color: #fff3cd; 
+                color: #856404; 
+            }
+            .sqltype-ELSE { 
+                background-color: #e2e3e5; 
+                color: #383d41; 
+            }
+            .sqltype-UNKNOWN { 
+                background-color: #f8d7da; 
+                color: #721c24; 
+            }
+            .charts-row {
+                display: flex;
+                justify-content: space-between;
+                gap: 20px;
+                margin: 20px 0;
+            }
+            .chart-container {
+                background-color: white;
+                border-radius: 4px;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                padding: 15px;
+                flex: 1;
+            }
+            .chart-wrapper {
+                width: 100%;
+                height: 300px;
+                margin: 0 auto;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>SQL Analysis Report</h1>
+
+            
+            <div class="summary-section">
+                <h3>Analysis Summary</h3>
+                <div class="summary-grid">
+		          	<div class="summary-item">
+                        <h4>File Nums</h4>
+                        <div class="summary-value">2</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>File Size</h4>
+                        <div class="summary-value">5.8 kB</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>SQL Fingerprints</h4>
+                        <div class="summary-value">32</div>
+                    </div>
+                    <div class="summary-item">
+                        <h4>Total SQL Executions</h4>
+                        <div class="summary-value">56</div>
+                    </div>
+                </div>
+                
+                <div class="charts-row">
+                    
+                    <div class="chart-container">
+                        <h4 style="margin: 0 0 15px 0; color: #2c3e50;">SQL Type Distribution</h4>
+                        <div class="chart-wrapper">
+                            <canvas id="sqlTypeChart"></canvas>
+                        </div>
+                    </div>
+
+                    
+                    <div class="chart-container">
+                        <h4 style="margin: 0 0 15px 0; color: #2c3e50;">Nums of Join Tables Distribution</h4>
+                        <div class="chart-wrapper">
+                            <canvas id="tableCountChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-panel">
+                <h3>Display Settings</h3>
+                
+                <div>
+                    <input type="text" class="search-box" id="searchInput" placeholder="Search...">
+                </div>
+                <div>
+                    <button onclick="toggleAllColumns(true)">Show All Columns</button>
+                    <button onclick="toggleAllColumns(false)">Hide All Columns</button>
+                </div>
+                <div id="columnToggles">
+                    
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table id="sqlTable">
+                    <thead>
+                        <tr>
+                            
+                                <th onclick="sortTable( 0 )" 
+                                    data-column="sqlid">
+                                    sqlid
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            
+                                <th onclick="sortTable( 1 )" 
+                                    data-column="sqltype">
+                                    sqltype
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            
+                                <th onclick="sortTable( 2 )" 
+                                    data-column="fingerprint">
+                                    fingerprint
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            
+                                <th onclick="sortTable( 3 )" 
+                                    data-column="tablelist">
+                                    tablelist
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            
+                                <th onclick="sortTable( 4 )" 
+                                    data-column="execution">
+                                    execution
+                                    <span class="sort-icon">⇅</span>
+                                </th>
+                            
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            EED022D709B5DA4D
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select id, name, salary, rank() over (order by salary desc) as salary_rank from users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            D08D166618E6BC67
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users where age &gt; ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            389FF9DA2DF3DF62
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select user()</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            6153D798A9A4EDE2
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-DDL">DDL</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">create table users ( id int auto_increment primary key, name varchar(?), age int, city varchar(?), salary decimal(?,?) )</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            5896D1096D9B558C
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-ELSE">ELSE</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">set global general_log=?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            831AD2FB940FC23C
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users where id = ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            12
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            0FD9925997B03211
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select city, count(*) as user_count from users group by city</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            1E673FAA643367F1
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select city, count(*) as user_count from users group by ；</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            6E3F90DDBC12719C
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users where salary &gt; (select avg(salary) from users)</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            87BAE6DA99D190A9
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select city, avg(age) as avg_age from users group by city</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            E2614CE311B973BF
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select count(*) as total_users from users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            16777FECB752BF05
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users order by salary desc limit ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            132628303F99240D
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-ELSE">ELSE</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">show tables</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            E745E369AC71BBCE
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users where salary = (select max(salary) from users)</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            775176AEFB28854F
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-DML">DML</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">insert into users (name, age, city, salary) values(?&#43;)</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            50826535B529468B
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-ELSE">ELSE</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">create database test</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            E3A3649C5FAC418D
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select @@version_comment limit ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            5CBA2034458B5BC9
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-ELSE">ELSE</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">show databases</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            3
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            5CA6471E3081F236
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users where salary &gt; ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            3811A994C76CADDF
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select city, avg(salary) as avg_salary from users group by city</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            8FFAA729489F3E87
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-UNKNOWN">UNKNOWN</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            8975B8BDEEFF43EF
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users order by salary limit ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            4A11D1AA18F0F632
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select city, sum(salary) as total_salary from users group by city</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            F9ED821CF82F6961
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-UNKNOWN">UNKNOWN</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">admin@127.0.0.1 on using tls</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            EF3C0A967687DF79
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users u1 where salary = (select max(salary) from users u2 where u1.city = u2.city)</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            495055AD0EA17C56
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select id, name, city, salary, rank() over (partition by city order by salary desc) as city_salary_rank from users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            493C7CF9A5F95BAB
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select id, name, salary, salary - lag(salary) over (order by salary desc) as salary_diff from users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            CADE4E832627B4F6
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-UNKNOWN">UNKNOWN</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">test</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            2
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            FB38455BF7035609
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select database()</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            3
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            F7A6F402D75C6880
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-QUERY">QUERY</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select avg(salary) as avg_salary from users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            7DD5F6760F2D2EBB
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-ELSE">ELSE</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">show variables like ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell"></div>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                            <tr>
+                                
+                                    <td>
+                                        
+                                            730CAA82684CDE50
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <span class="sqltype-cell sqltype-ELSE">ELSE</span>
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">select * from users where city = ? union select * from users where salary &gt; ?</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            <div class="sql-cell">users</div>
+                                            
+                                                <span class="toggle-btn" onclick="toggleCell(this)">Expand</span>
+                                            
+                                        
+                                    </td>
+                                
+                                    <td>
+                                        
+                                            1
+                                        
+                                    </td>
+                                
+                            </tr>
+                        
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <script>
+            
+            function toggleColumn(columnName) {
+                const table = document.getElementById('sqlTable');
+                const index = Array.from(table.rows[0].cells).findIndex(
+                    cell => cell.dataset.column === columnName
+                );
+                if (index > -1) {
+                    const isVisible = document.querySelector(`.column-toggle[data-column="${columnName}"]`).checked;
+                    Array.from(table.rows).forEach(row => {
+                        const cell = row.cells[index];
+                        cell.style.display = isVisible ? '' : 'none';
+                    });
+                }
+            }
+
+            
+            function toggleAllColumns(show) {
+                const checkboxes = document.querySelectorAll('.column-toggle');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = show;
+                    toggleColumn(checkbox.dataset.column);
+                });
+            }
+
+            
+            function generateColumnToggles() {
+                const headers = Array.from(document.querySelectorAll('th')).map(th => th.dataset.column);
+                const container = document.getElementById('columnToggles');
+                
+                const groupDiv = document.createElement('div');
+                groupDiv.style.marginBottom = '10px';
+                
+                headers.forEach(column => {
+                    const label = document.createElement('label');
+                    label.style.marginRight = '15px';
+                    
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = true;
+                    checkbox.className = 'column-toggle';
+                    checkbox.dataset.column = column;
+                    checkbox.onchange = () => toggleColumn(column);
+                    
+                    label.appendChild(checkbox);
+                    label.appendChild(document.createTextNode(column));
+                    groupDiv.appendChild(label);
+                });
+
+                container.appendChild(groupDiv);
+            }
+
+            
+            function sortTable(colIndex) {
+                const table = document.getElementById('sqlTable');
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.rows);
+                const th = table.rows[0].cells[colIndex];
+                const isAsc = th.classList.contains('asc');
+
+                
+                table.querySelectorAll('th').forEach(header => {
+                    header.classList.remove('asc', 'desc');
+                });
+
+                
+                th.classList.add(isAsc ? 'desc' : 'asc');
+
+                rows.sort((a, b) => {
+                    let aVal = a.cells[colIndex].innerText.trim();
+                    let bVal = b.cells[colIndex].innerText.trim();
+
+                    
+                    const aNum = parseFloat(aVal);
+                    const bNum = parseFloat(bVal);
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return isAsc ? bNum - aNum : aNum - bNum;
+                    }
+
+                    
+                    return isAsc ? 
+                        bVal.localeCompare(aVal) : 
+                        aVal.localeCompare(bVal);
+                });
+
+                
+                rows.forEach(row => tbody.appendChild(row));
+            }
+
+            
+            function toggleCell(btn) {
+                const cell = btn.previousElementSibling;
+                if (cell.classList.contains('expanded')) {
+                    cell.classList.remove('expanded');
+                    btn.textContent = 'Expand';
+                } else {
+                    cell.classList.add('expanded');
+                    btn.textContent = 'Collapse';
+                }
+            }
+
+            
+            document.getElementById('searchInput').addEventListener('input', function(e) {
+                const searchText = e.target.value.toLowerCase();
+                const tbody = document.querySelector('tbody');
+                Array.from(tbody.rows).forEach(row => {
+                    const text = Array.from(row.cells)
+                        .map(cell => cell.textContent)
+                        .join(' ')
+                        .toLowerCase();
+                    row.style.display = text.includes(searchText) ? '' : 'none';
+                });
+            });
+
+            
+            document.addEventListener('DOMContentLoaded', function() {
+                generateColumnToggles();
+                
+                
+                const ctx = document.getElementById('sqlTypeChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: ["ELSE","DML","UNKNOWN","QUERY","DDL"],
+                        datasets: [{
+                            data: [10,1,5,39,1],
+                            backgroundColor: [
+                                '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
+                                '#858796', '#5a5c69', '#2c9faf', '#3c5a9a', '#e83e8c'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        layout: {
+                            padding: {
+                                left: 20,
+                                right: 20
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                align: 'center'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const label = context.label || '';
+                                        const value = context.parsed;
+                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                        const percentage = ((value * 100) / total).toFixed(1);
+                                        return `${label}: ${value} (${percentage}%)`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                
+                const ctxTable = document.getElementById('tableCountChart').getContext('2d');
+                new Chart(ctxTable, {
+                    type: 'bar',
+                    data: {
+                        labels: Object.keys({"0":21,"1":35}),
+                        datasets: [{
+                            label: 'SQL Executions',
+                            data: Object.values({"0":21,"1":35}),
+                            backgroundColor: '#36b9cc',
+                            borderColor: '#2c9faf',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                type: 'logarithmic',
+                                title: {
+                                    display: true,
+                                    text: 'SQL Count (log scale)'
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Number of Tables'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `SQL Count: ${context.parsed.y}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        </script>
+    </body>
+    </html>

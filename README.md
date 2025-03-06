@@ -10,10 +10,6 @@ analyze部分支持 mysql 5.6,5.7,8.0下的general log，slow log
 这个工具使用的初衷是需要比较业务sql在多个数据库下的性能差异，并生成简单比对结果。
 主要涉及到两个部分，一个是sql采集，工具支持从mysql的全量日志、慢日志、csv文件进行raw sql的采集，汇总。另一个sql回放，sql回放支持在多个数据源对raw sql进行回放，并得到比对结果。
 
-# 安装
-
-sqlreplayer目录下:
-go build 
 
 # 三种模式
 
@@ -24,77 +20,107 @@ both：analyze和replay的结合
 
 ## analyze 
 
-analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取raw sql，并以csv格式的文件输出
+analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取raw sql，并以csv格式的文件输出，同时可以生成解析报告。
 
-> ./sqlreplayer -exec analyze -f test_general_1.log -logtype genlog  
-[analyze]2023/12/28 17:20:50 begin to read genlog test_general_1.log  
-[analyze]2023/12/28 17:20:50 finish reading genlog test_general_1.log  
-[analyze]2023/12/28 17:20:50 raw sql save to 20231228_172050_rawsql.csv  
+<div align="center">
+  <div style="max-width: 1000px; margin: 20px auto; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; background-color: #fff;">
+    <img src="example/analyze_report_p1.png" alt="analyze统计结果" style="width: 100%; height: auto; display: block; margin: 0 auto;">
+    <p style="margin-top: 15px; color: #666; font-size: 14px; font-style: italic;">
+            SQL分析报告示例 Part 1 - 展示了SQL类型分布和表连接数量统计
+    </p>
+  </div>
+</div>
 
-抓取原始sql的时候，可以增加一些条件来筛选sql，如下面的命令能够抓取10点到10点半之间的慢查询
+<div align="center">
+  <div style="max-width: 1000px; margin: 20px auto; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; background-color: #fff;">
+    <img src="example/analyze_report_p2.png" alt="analyze统计结果" style="width: 100%; height: auto; display: block; margin: 0 auto;">
+    <p style="margin-top: 15px; color: #666; font-size: 14px; font-style: italic;">
+            SQL分析报告示例 Part 2 - 展示SQL类型，执行次数
+    </p>
+  </div>
+</div>
 
->./sqlreplayer -exec analyze -f slow_8.0.log -logtype slowlog -begin "2024-01-01 10:00:00" -end "2024-01-01 10:30:00"
-
-
-分析原始sql的时候，指定-generate-report，对sql分布按照sqlid进行简单统计
-
->./sqlreplayer -exec analyze -f slow.log -logtype slowlog -generate-report  
-[analyze]2024/01/15 11:03:26 begin to read slowlog slow.log  
-[analyze]2024/01/15 11:03:26 finish reading slowlog slow.log  
-[analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_rawsql.csv  
-[analyze]2024/01/15 11:03:26 raw sql save to 20240115_110326_analyze_report.csv  
-
-
-20240115_110326_rawsql.csv保存了日志当中原始sql，执行时间，消耗时间。20240115_110326_analyze_report.csv则是对sql按照指纹化之后进行简要的统计和分析结果。下面是20240115_110326_analyze_report.csv内容截图。
-
-![analyze统计结果](example/analyze_report.png)
-
->上图A列为sqlid，是对sql模板化之后标识，B列是模板化后的sql，D列是这类型SQL最小执行秒数，E列是最小执行秒数对应的带有具体参数的原始SQL（需要打开-save-raw-sql参数，但是会占用较大内存，与日志执行SQL总量有关）。F-O列，p25,p50,p75,p99代表的是该类SQL在对应分位值的耗时。以红框内这行记录为例，04BDF42927323356这条sql执行次数为335次，其中99%的耗时均小于2ms。
+<div align="center">
+  <div style="max-width: 1000px; margin: 20px auto;">
+    <a href="example/rawsql_analyze_report.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
+      👉 查看完整分析报告
+    </a>
+  </div>
+</div>
 
 
 ## replay 
 
-replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和ip2:port2两个数据源上进行回放，以此来比较性能差异
-
->./sqlreplayer -exec replay -f test.csv -conn  'user1:passwd1:ip1:port1:db1,user2:passwd2:ip2:port2:db2'  
-[init]2023/12/28 16:57:02 conn 0 [user1:passwd1:ip1:port1:db1]  
-[init]2023/12/28 16:57:02 conn 1 [user2:passwd2:ip2:port2:db2]  
-[replay]2023/12/28 16:57:08 reach the end of log file.  
-[replay]2023/12/28 16:57:14 sql replay finish ,num of raw sql 3,time elasped 12.573019s  
-[replay]2023/12/28 16:57:14 save replay result to 20231228_173023_replay_stats.csv
-
-下面是test.csv文件的内容。这个文件内容可以通过analyze阶段进行生成，也可以通过手动来维护需要进行回放的sql
->"select 1,sleep(1)"  
-"select 2,sleep(2)"  
-"select 3,sleep(3)"  
-"select 1"  
-"select 2"  
-"select 3"  
+replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和ip2:port2两个数据源上进行回放，以此来比较性能差异。同时生成回放报告。
 
 
-
-回放结果如下面表格所示。raw sql会按照sqlID进行聚合，并展示在多个数据源下的一些基本性能指标。用于比较sql在不同数据源下的性能差异。
-
-| sqlid            | sqltype | conn_0_min(ms) | conn_0_min-sql | conn_0_p99(ms) | conn_0_p99-sql | conn_0_max(ms) | conn_0_max-sql | conn_0_avg(ms) | conn_0_execution | conn_1_min(ms) | conn_1_min-sql | conn_1_p99(ms) | conn_1_p99-sql | conn_1_max(ms) | conn_1_max-sql | conn_1_avg(ms) | conn_1_execution |
-|------------------|---------|----------------|----------------|----------------|----------------|----------------|----------------|----------------|------------------|----------------|----------------|----------------|----------------|----------------|----------------|----------------|------------------|
-| 16219655761820A2 |         | 44             | select 1       | 44             | select 2       | 45             | select 3       | 44.33          | 3                | 44             | select 2       | 44             | select 3       | 45             | select 1       | 44.33          | 3                |
-| EE3DCDA8BEC5E966 |         | 1189           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3047           | select 3,sleep(3) | 2094.00        | 3                | 1186           | select 1,sleep(1) | 2046           | select 2,sleep(2) | 3048           | select 3,sleep(3) | 2093.33        | 3                |
-
-
->回放显示结果和分析阶段生成的analyze_report相似。第一行为SQLID为16219655761820A2在各个数据源上的执行结果。 conn_0_execution表示该类型的SQL在conn0上执行了3次，conn_0_p99(ms)表示在conn0上99%的执行结果时间是小于等于44ms的，99分位值对应的sql为select 1。可以直观比较sql在各个数据源上的执行结果。
+<div align="center">
+  <div style="max-width: 1000px; margin: 20px auto; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; background-color: #fff;">
+    <img src="example/replay_report_p1.png" alt="analyze统计结果" style="width: 100%; height: auto; display: block; margin: 0 auto;">
+    <p style="margin-top: 15px; color: #666; font-size: 14px; font-style: italic;">
+            SQL回放报告示例 Part 1 - 展示了SQL回放基本统计信息，数据源的回放概况
+    </p>
+  </div>
+</div>
 
 
-replay相关的其他参数
+<div align="center">
+  <div style="max-width: 1000px; margin: 20px auto; padding: 20px; box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; background-color: #fff;">
+    <img src="example/replay_report_p2.png" alt="analyze统计结果" style="width: 100%; height: auto; display: block; margin: 0 auto;">
+    <p style="margin-top: 15px; color: #666; font-size: 14px; font-style: italic;">
+            SQL回放报告示例 Part 2 - 展示SQL回放的情况，各个数据源的执行情况，响应时间比较等
+    </p>
+  </div>
+</div>
 
->-m: 回放倍数，每个raw sql执行次数，默认是1  
--threads: 回放并发数，默认是1  
--sql-type: 回放的语句类型，可选为query，dml，ddl，all，默认为query，仅回放query
--charset: 默认为utf8mb4
+
+<div align="center">
+  <div style="max-width: 1000px; margin: 20px auto;">
+    <a href="example/replay_stats.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
+      👉 查看完整回放报告
+    </a>
+  </div>
+</div>
 
 
 ## both
 
-both模式是analyze和replay阶段结合，从日志采集到raw sql之后直接在配置的数据源下进行回放。
+both模式是analyze和replay阶段结合，从日志采集到raw sql之后直接在配置的数据源下进行回放。  
+
+
+
+
+
+
+# 快速开始
+
+cd cmd  
+make  
+./sqlreplayer -config config_analyze_demo.yaml  
+> Using configuration file: config_analyze_demo.yaml  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 3 start.  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 1 start.  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 2 start.  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:722  begin to analyze general_sample.log from pos 0  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:502  worker 2 exit.  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:492  worker 0 start.  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:502  worker 0 exit.  
+2025-03-06T17:18:06.335 [info]  sqlreplayer/sqlreplayer.go:722  begin to analyze general_sample_2.log from pos 0  
+2025-03-06T17:18:06.340 [info]  sqlreplayer/sqlreplayer.go:539  finish parse GENLOG general_sample_2.log  
+2025-03-06T17:18:06.340 [info]  sqlreplayer/sqlreplayer.go:502  worker 1 exit.  
+2025-03-06T17:18:06.340 [info]  sqlreplayer/sqlreplayer.go:539  finish parse GENLOG general_sample.log  
+2025-03-06T17:18:06.340 [info]  sqlreplayer/sqlreplayer.go:502  worker 3 exit.  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:1484 Raw SQL report saved to ./test/sqlreplayer_task_20250306171806/rawsql_analyze_report.html  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:595  task finished.  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:606  Memory statistic   
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:607  Allocated Memory: 1655 KB  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:608  Total Allocated Memory: 4488 KB  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:609  Heap Memory: 1655 KB  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:610  Heap Memory System: 7648 KB  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:611  MaxHeapAlloc: 3128 KB  
+2025-03-06T17:18:06.346 [info]  sqlreplayer/sqlreplayer.go:613  exit.  
+
+更多用法可以参考demo.yaml文件的配置
 
 
 # 参数说明
@@ -114,8 +140,8 @@ both模式是analyze和replay阶段结合，从日志采集到raw sql之后直�
         filter sql according to specified end time from log,format 2023-01-01 13:01:01 (default "9999-12-31 23:59:59")  
 
 分析日志路径  
-  -f string  
-        filename  
+  -filelist string  
+        filename,multiple file seperated by ','  
 
 日志格式  
   -logtype string  
@@ -125,7 +151,7 @@ both模式是analyze和replay阶段结合，从日志采集到raw sql之后直�
   -generate-report  
         generate report for analyze phrase  
 
-生成报告是否保存raw sql信息，可以输出各个分位值的raw sql，对于raw sql数据量很大，打开这个选项会导致内存占用过多  
+生成报告是否保存raw sql信息
   -save-raw-sql  
         save raw sql in report  
 
@@ -143,8 +169,8 @@ both模式是analyze和replay阶段结合，从日志采集到raw sql之后直�
         mysql connection string,support multiple connections seperated by ',' which can be used for comparation,format   user1:passwd1:ip1:port1:db1[,user2:passwd2:ip2:port2:db2]  
 
 回放文件  
-  -f string  
-        filename  
+  -filelist string  
+        filename,multiple file seperated by ','  
 
 回放倍数  
   -m int  
@@ -158,16 +184,7 @@ both模式是analyze和replay阶段结合，从日志采集到raw sql之后直�
   -threads int  
         thread num while replaying (default 1)  
 
-replay报告是否保存raw sql信息，可以输出各个分位值的raw sql，对于raw sql数据量很大，打开这个选项会导致内存占用过多
+replay报告是否保存raw sql信息
   -save-raw-sql  
         save raw sql in report  
 
-按照sqlid绘制raw sql响应时间散点图  
-  -draw-pic  
-        draw elasped picture for each sqlid  
-
-![散点图实例](example/20240123_181642_Conn0_CA6E6CCC68F8018C.png)
-
-回放阶段不统计信息
-  -dry-run  
-        replay raw sql without collecting any extra info  

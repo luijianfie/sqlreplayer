@@ -10,15 +10,14 @@ type Config struct {
 	End                string   `yaml:"end_time"`
 	Conns              []string `yaml:"conns"`
 	Charset            string   `yaml:"charset"`
-	Thread             int      `yaml:"thread"`
+	Thread             int      `yaml:"thread"` // number of threads for each worker in replay mode
 	Multi              int      `yaml:"multiplier"`
 	ReplaySQLType      string   `yaml:"sql_type"`
 	ReplayFilter       string   `yaml:"sql_filter"`
 	GenerateReport     bool     `yaml:"generate_report"`
 	SaveRawSQLInReport bool     `yaml:"save_raw_sql"` // save raw sql in report
-	DrawPic            bool     `yaml:"draw_pic"`
 	DryRun             bool     `yaml:"dry_run"`
-	WorkerNum          int      `yaml:"worker_num"` // number of workers
+	WorkerNum          int      `yaml:"worker_num"` // number of workers,parallel degree for file
 
 	Dir      string `yaml:"save_dir"`
 	Metafile string `yaml:"metafile"`

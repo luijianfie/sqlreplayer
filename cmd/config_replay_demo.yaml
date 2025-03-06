@@ -1,0 +1,35 @@
+# 执行模式: analyze, replay, both
+exec_type: "replay"
+
+# 需要分析的文件列表
+file_list: 
+  - "./test/sqlreplayer_task_20250306164205/rawsql_0.csv"
+  - "./test/sqlreplayer_task_20250306164205/rawsql_1.csv"
+
+# 日志类型
+log_type: "csv"
+
+# 输出目录
+save_dir: "./test/"
+
+# 数据库连接信息 (type:user:password:ip:port:db)
+conns:
+  - "mysql:test:test:10.10.218.57:3306:test"
+  - "mysql:test:test:10.10.218.57:3306:test_2"
+
+# SQL执行配置
+sql_type: "query"
+sql_filter: "SQL_NO_CACHE"
+
+# 并行度配置
+worker_num: 8    # worker数量（文件并行处理度）
+thread: 8        # 每个worker的线程数
+
+# 报告生成选项
+generate_report: true
+save_raw_sql: true
+
+# 其他可选配置
+charset: "utf8mb4"
+multiplier: 1    # 执行倍数
+dry_run: false   # 是否只进行预检查不实际执行

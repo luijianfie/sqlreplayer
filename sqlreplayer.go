@@ -55,6 +55,7 @@ const (
 )
 
 const TASK_CHAN_LENGTH = 20
+const REPLAY_COLLECTOR_LENGTH = 100
 
 func (s Status) String() string {
 	switch s {
@@ -112,16 +113,19 @@ type task struct {
 }
 
 type sqlStatus struct {
-	Sqlid       string
-	Fingerprint string
-	Tablelist   string
-	Sqltype     string
-	Min         uint64
-	Max         uint64
-	TimeElapse  uint64
-	Minsql      string
-	Maxsql      string
-	Execution   uint64
+	Sqlid           string
+	SQL             string
+	Fingerprint     string
+	Tablelist       string
+	Sqltype         string
+	Min             int64
+	Max             int64
+	TimeElapse      int64
+	Minsql          string
+	Maxsql          string
+	Execution       uint64
+	DataSourceIndex int
+	ErrorCount      uint64
 }
 
 type SQLReplayer struct {
@@ -149,7 +153,6 @@ type SQLReplayer struct {
 	ReplaySQLType      SQLMode
 	ReplayFilter       string
 	DryRun             bool
-	DrawPic            bool
 	Currency           int //num of worker
 	Multiplier         int //multiplier
 	Thread             int //thread pool for one database instance
@@ -175,9 +178,11 @@ type SQLReplayer struct {
 	logger *zap.Logger `json:"-"`
 
 	//controller
-	stopchan chan struct{}
-	donechan chan struct{}
-	taskchan chan int
+	stopchan            chan struct{}
+	donechan            chan struct{}
+	taskchan            chan int
+	replayCollector     chan *sqlStatus
+	replayCollectorDone chan struct{}
 
 	//Status
 	Status         Status
@@ -193,10 +198,12 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 	if len(c.Metafile) > 0 {
 
 		sr = SQLReplayer{
-			logger:   c.Logger,
-			stopchan: make(chan struct{}),
-			donechan: make(chan struct{}),
-			taskchan: make(chan int, TASK_CHAN_LENGTH),
+			logger:              c.Logger,
+			stopchan:            make(chan struct{}),
+			donechan:            make(chan struct{}),
+			taskchan:            make(chan int, TASK_CHAN_LENGTH),
+			replayCollector:     make(chan *sqlStatus, REPLAY_COLLECTOR_LENGTH),
+			replayCollectorDone: make(chan struct{}),
 		}
 		sr.logger.Sugar().Infof("begin to load meta file from %s", c.Metafile)
 		err := sr.Load(c.Metafile)
@@ -220,16 +227,17 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			ReplaySQLType:      QUERY,
 			ReplayFilter:       c.ReplayFilter,
 			DryRun:             c.DryRun,
-			DrawPic:            c.DrawPic,
 			QueryID2RelayStats: make(map[string][]*sqlStatus),
 			Currency:           c.WorkerNum,
 			Multiplier:         c.Multi,
 			Thread:             c.Thread,
 
-			logger:   c.Logger,
-			stopchan: make(chan struct{}),
-			donechan: make(chan struct{}),
-			taskchan: make(chan int, TASK_CHAN_LENGTH),
+			logger:              c.Logger,
+			stopchan:            make(chan struct{}),
+			donechan:            make(chan struct{}),
+			taskchan:            make(chan int, TASK_CHAN_LENGTH),
+			replayCollector:     make(chan *sqlStatus, REPLAY_COLLECTOR_LENGTH),
+			replayCollectorDone: make(chan struct{}),
 
 			Status: PROCESSING,
 		}
@@ -394,9 +402,88 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 
 }
 
+// deal with replay info here
+func (sr *SQLReplayer) startReplayCollector() {
+
+	sr.logger.Sugar().Infof("start replay collector")
+
+	defer close(sr.replayCollectorDone)
+	for {
+		select {
+		case <-sr.stopchan:
+			sr.logger.Sugar().Infof("recieve stop signal, exit replay collector")
+			return
+		case status, ok := <-sr.replayCollector:
+			if !ok {
+				sr.logger.Sugar().Infof("replayer collecter exit.")
+				return
+			} else {
+
+				_, ok := sr.QueryID2RelayStats[status.Sqlid]
+				if !ok {
+					sr.QueryID2RelayStats[status.Sqlid] = make([]*sqlStatus, len(sr.Conns))
+				}
+
+				//not exist
+				if sr.QueryID2RelayStats[status.Sqlid][status.DataSourceIndex] == nil {
+
+					if sr.SaveRawSQLInReport {
+						status.Minsql = status.SQL
+						status.Maxsql = status.SQL
+					}
+
+					sr.QueryID2RelayStats[status.Sqlid][status.DataSourceIndex] = status
+
+				} else {
+					s := sr.QueryID2RelayStats[status.Sqlid][status.DataSourceIndex]
+					s.Execution += 1
+					s.ErrorCount += status.ErrorCount
+
+					if status.ErrorCount == 0 {
+
+						if s.Min == -1 {
+							//the first execution meet error
+							//set min and max to current time elapse
+							s.Min = status.TimeElapse
+							s.Max = status.TimeElapse
+							if sr.SaveRawSQLInReport {
+								s.Minsql = s.SQL
+								s.Maxsql = s.SQL
+							}
+
+						} else {
+
+							s.TimeElapse += status.TimeElapse
+							if s.Min > s.TimeElapse {
+								s.Min = s.TimeElapse
+								if sr.SaveRawSQLInReport {
+									s.Minsql = s.SQL
+								}
+							}
+
+							if s.Max < s.TimeElapse {
+								s.Max = s.TimeElapse
+								if sr.SaveRawSQLInReport {
+									s.Maxsql = s.SQL
+								}
+							}
+						}
+					}
+				}
+
+			}
+
+		}
+	}
+}
+
 func (sr *SQLReplayer) Start() {
 
 	sr.wg.Add(sr.Currency)
+
+	if sr.ExecMode&model.REPLAY != 0 {
+		go sr.startReplayCollector()
+	}
 
 	for i := 0; i < sr.Currency; i++ {
 
@@ -484,6 +571,9 @@ func (sr *SQLReplayer) Start() {
 
 	sr.wg.Wait()
 
+	//all task is done,close replay collector
+	close(sr.replayCollector)
+
 	sr.mutex.Lock()
 	if sr.Status == STOPPING {
 		sr.Status = STOPPED
@@ -497,6 +587,7 @@ func (sr *SQLReplayer) Start() {
 			}
 
 			if sr.ExecMode&model.REPLAY != 0 {
+				<-sr.replayCollectorDone
 				sr.generateReplayReport()
 			}
 		}
@@ -700,10 +791,10 @@ func (sr *SQLReplayer) analyze(t *task) error {
 				Fingerprint: fingerprint,
 				Sqltype:     cu.CommandType,
 				Execution:   1,
-				TimeElapse:  uint64(cu.Elapsed * 1000),
+				TimeElapse:  int64(cu.Elapsed * 1000),
 				Tablelist:   cu.TableList,
-				Min:         uint64(cu.Elapsed * 1000),
-				Max:         uint64(cu.Elapsed * 1000),
+				Min:         int64(cu.Elapsed * 1000),
+				Max:         int64(cu.Elapsed * 1000),
 			}
 			if sr.GenerateReport {
 				s.Minsql = cu.Argument
@@ -712,7 +803,7 @@ func (sr *SQLReplayer) analyze(t *task) error {
 			tmpSqlID2Fingerprint[cu.QueryID] = s
 		} else {
 
-			elapse := uint64(cu.Elapsed * 1000)
+			elapse := int64(cu.Elapsed * 1000)
 			s := tmpSqlID2Fingerprint[cu.QueryID]
 			s.Execution++
 			s.TimeElapse += elapse
@@ -849,9 +940,9 @@ func (sr *SQLReplayer) generateRawSQLReport() error {
 		}
 		if additionalInfo {
 			avg := float64(sqlStatus.TimeElapse) / float64(sqlStatus.Execution)
-			row["min"] = strconv.FormatUint(sqlStatus.Min, 10)
+			row["min"] = strconv.FormatInt(sqlStatus.Min, 10)
 			row["min_sql"] = sqlStatus.Minsql
-			row["max"] = strconv.FormatUint(sqlStatus.Max, 10)
+			row["max"] = strconv.FormatInt(sqlStatus.Max, 10)
 			row["max_sql"] = sqlStatus.Maxsql
 			row["avg"] = strconv.FormatFloat(avg, 'f', 1, 64)
 		}
@@ -866,7 +957,7 @@ func (sr *SQLReplayer) generateRawSQLReport() error {
 	summary.TotalSQLs = humanize.Comma(int64(TotalSQLs))
 
 	// 计算文件总数和文件累计大小
-	summary.FileCount = humanize.Comma(int64(sr.TaskSeq + 1))
+	summary.FileCount = humanize.Comma(int64(sr.TaskSeq))
 	summary.TotalFileSize = humanize.Bytes(sr.FileSize)
 
 	// HTML 模板
@@ -1516,20 +1607,6 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 			tablelist, _ := utils.ExtractTableNames(sql)
 
 			wg.Add(1)
-			sr.mutex.Lock()
-			sr.ReplayRowCount++
-
-			// _, ok := sr.SqlID2Fingerprint[sqlid]
-			// if !ok {
-			// 	sr.SqlID2Fingerprint[sqlid] = &sqlStatus{fingerprint: fingerprint}
-			// }
-
-			_, ok := sr.QueryID2RelayStats[sqlid]
-			if !ok {
-				sr.QueryID2RelayStats[sqlid] = make([]*sqlStatus, len(sr.Conns))
-			}
-
-			sr.mutex.Unlock()
 
 			ch <- struct{}{}
 
@@ -1538,59 +1615,56 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 				defer wg.Done()
 				for i := 0; i < sr.Multiplier; i++ {
 
-					for ind, db := range dbs {
+					connwg := sync.WaitGroup{}
 
-						start := time.Now()
+					for ind := range dbs {
 
-						_, err := db.Exec(sql)
+						connwg.Add(1)
 
-						if err != nil {
-							sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", sqlid, sql, err.Error())
-							continue
-						}
+						go func(index int) {
+							defer connwg.Done()
 
-						elapsed := time.Since(start)
-						elapsedMilliseconds := elapsed.Milliseconds()
+							db := dbs[index]
 
-						sr.mutex.Lock()
+							errCount := 0
+							start := time.Now()
 
-						if sr.QueryID2RelayStats[sqlid][ind] == nil {
+							_, err := db.Exec(sql)
+
+							if err != nil {
+								sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", sqlid, sql, err.Error())
+								errCount = 1
+							}
+
+							elapsed := time.Since(start)
+							elapsedMilliseconds := elapsed.Milliseconds()
+
 							s := &sqlStatus{
-								Sqlid:       sqlid,
-								Fingerprint: fingerprint,
-								Tablelist:   tablelist,
-								Execution:   1,
-								TimeElapse:  uint64(elapsedMilliseconds),
-								Min:         uint64(elapsedMilliseconds),
-								Max:         uint64(elapsedMilliseconds),
+								Sqlid:           sqlid,
+								SQL:             sql,
+								Fingerprint:     fingerprint,
+								Tablelist:       tablelist,
+								Execution:       1,
+								TimeElapse:      elapsedMilliseconds,
+								Min:             elapsedMilliseconds,
+								Max:             elapsedMilliseconds,
+								DataSourceIndex: index,
+								ErrorCount:      uint64(errCount),
 							}
 
-							if sr.SaveRawSQLInReport {
-								s.Minsql = sql
-								s.Maxsql = sql
-							}
-							sr.QueryID2RelayStats[sqlid][ind] = s
-						} else {
-							s := sr.QueryID2RelayStats[sqlid][ind]
-							s.Execution += 1
-							s.TimeElapse += uint64(elapsedMilliseconds)
-
-							if s.Min > uint64(elapsedMilliseconds) {
-								s.Min = uint64(elapsedMilliseconds)
-								if sr.SaveRawSQLInReport {
-									s.Minsql = sql
-								}
+							//mark down this is a error sql
+							if errCount > 0 {
+								s.TimeElapse = -1
+								s.Min = -1
+								s.Max = -1
 							}
 
-							if s.Max < uint64(elapsedMilliseconds) {
-								s.Max = uint64(elapsedMilliseconds)
-								if sr.SaveRawSQLInReport {
-									s.Maxsql = sql
-								}
-							}
-						}
-						sr.mutex.Unlock()
+							sr.replayCollector <- s
+
+						}(ind)
 					}
+
+					connwg.Wait()
 
 				}
 			}()
@@ -1657,8 +1731,9 @@ func (sr *SQLReplayer) generateReplayReport() error {
 	// performance summary
 	type Summary struct {
 		TotalSQLs   []int     // total sql count for each conn
-		TotalTime   []uint64  // total execution time for each conn
+		TotalTime   []int64   // total execution time for each conn
 		TotalExec   []uint64  // total execution count for each conn
+		TotalError  []uint64  // total error count for each conn
 		AvgResponse []float64 // average response time for each conn
 		BetterCount []int     // better performance count for each conn
 	}
@@ -1667,8 +1742,9 @@ func (sr *SQLReplayer) generateReplayReport() error {
 	connCount := len(sr.Conns)
 	summary := Summary{
 		TotalSQLs:   make([]int, connCount),
-		TotalTime:   make([]uint64, connCount),
+		TotalTime:   make([]int64, connCount),
 		TotalExec:   make([]uint64, connCount),
+		TotalError:  make([]uint64, connCount),
 		AvgResponse: make([]float64, connCount),
 		BetterCount: make([]int, connCount),
 	}
@@ -1690,7 +1766,7 @@ func (sr *SQLReplayer) generateReplayReport() error {
 		// calculate average response time for baseline conn(conn_0)
 		var baselineAvg float64
 		if dbsToStats[0] != nil && dbsToStats[0].Execution > 0 {
-			baselineAvg = float64(dbsToStats[0].TimeElapse) / float64(dbsToStats[0].Execution)
+			baselineAvg = float64(dbsToStats[0].TimeElapse) / float64(dbsToStats[0].Execution-dbsToStats[0].ErrorCount)
 		}
 
 		for i := 0; i < len(dbsToStats); i++ {
@@ -1702,9 +1778,10 @@ func (sr *SQLReplayer) generateReplayReport() error {
 			summary.TotalSQLs[i]++
 			summary.TotalTime[i] += dbsToStats[i].TimeElapse
 			summary.TotalExec[i] += dbsToStats[i].Execution
+			summary.TotalError[i] += dbsToStats[i].ErrorCount
 
 			// calculate average response time for current sql in current conn
-			currentAvg := float64(dbsToStats[i].TimeElapse) / float64(dbsToStats[i].Execution)
+			currentAvg := float64(dbsToStats[i].TimeElapse) / float64(dbsToStats[i].Execution-dbsToStats[i].ErrorCount)
 
 			// if not baseline conn and better performance, increase better count
 			if i > 0 && currentAvg < baselineAvg {
@@ -1712,20 +1789,21 @@ func (sr *SQLReplayer) generateReplayReport() error {
 			}
 
 			prefix := fmt.Sprintf("conn_%d_", i)
-			row[prefix+"min"] = strconv.FormatUint(dbsToStats[i].Min, 10)
+			row[prefix+"min"] = strconv.FormatInt(dbsToStats[i].Min, 10)
 			row[prefix+"min_sql"] = dbsToStats[i].Minsql
-			row[prefix+"max"] = strconv.FormatUint(dbsToStats[i].Max, 10)
+			row[prefix+"max"] = strconv.FormatInt(dbsToStats[i].Max, 10)
 			row[prefix+"max_sql"] = dbsToStats[i].Maxsql
 			row[prefix+"avg"] = strconv.FormatFloat(currentAvg, 'f', 1, 64)
 			row[prefix+"execution"] = strconv.FormatUint(dbsToStats[i].Execution, 10)
+			row[prefix+"error"] = strconv.FormatUint(dbsToStats[i].ErrorCount, 10)
 		}
 		data = append(data, row)
 	}
 
 	// calculate overall average response time
 	for i := range summary.AvgResponse {
-		if summary.TotalExec[i] > 0 {
-			summary.AvgResponse[i] = math.Round(float64(summary.TotalTime[i])/float64(summary.TotalExec[i])*10) / 10
+		if summary.TotalExec[i] > 0 && summary.TotalError[i] != summary.TotalExec[i] {
+			summary.AvgResponse[i] = math.Round(float64(summary.TotalTime[i])/float64(summary.TotalExec[i]-summary.TotalError[i])*10) / 10
 		}
 	}
 	// generate table header
@@ -1737,7 +1815,8 @@ func (sr *SQLReplayer) generateReplayReport() error {
 			prefix+"max",
 			prefix+"max_sql",
 			prefix+"avg",
-			prefix+"execution")
+			prefix+"execution",
+			prefix+"error")
 	}
 
 	// HTML template
@@ -1961,6 +2040,9 @@ func (sr *SQLReplayer) generateReplayReport() error {
             .better-count {
                 color: #198754;
             }
+            .error-count {
+                color: #dc3545;
+            }
             .charts-row {
                 display: flex;
                 justify-content: space-between;
@@ -2014,6 +2096,10 @@ func (sr *SQLReplayer) generateReplayReport() error {
                                 <div class="stat-item">
                                     <span class="stat-label">Avg Response</span>
                                     <span class="stat-value">{{index $.Summary.AvgResponse $i}}ms</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">Error Count</span>
+                                    <span class="stat-value error-count">{{index $.Summary.TotalError $i}}</span>
                                 </div>
                                 {{if ne $i 0}}
                                     <div class="stat-item">
