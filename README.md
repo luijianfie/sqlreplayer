@@ -42,7 +42,7 @@ analyze部分能够从mysql的全量日志，慢日志以及csv文件中获取ra
 
 <div align="center">
   <div style="max-width: 1000px; margin: 20px auto;">
-    <a href="example/rawsql_analyze_report.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
+    <a href="https://luijianfie.github.io/sqlreplayer/example/rawsql_analyze_report.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
       👉 查看完整分析报告
     </a>
   </div>
@@ -76,7 +76,7 @@ replay对raw sql进行的回放，比如下面命令行讲raw sql在ip1:port1和
 
 <div align="center">
   <div style="max-width: 1000px; margin: 20px auto;">
-    <a href="example/replay_stats.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
+    <a href="https://luijianfie.github.io/sqlreplayer/example/replay_stats.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
       👉 查看完整回放报告
     </a>
   </div>
@@ -188,3 +188,14 @@ replay报告是否保存raw sql信息
   -save-raw-sql  
         save raw sql in report  
 
+
+# 联系我
+
+如果您在使用过程中有任何问题或建议，欢迎通过以下方式与我联系：
+
+- 📱 **微信**: `418901779`
+- 📧 **邮箱**: [luwenhaoterry@163.com](mailto:luwenhaoterry@163.com)
+- 💬 **问题反馈**: 欢迎在 [GitHub Issues](https://github.com/luijianfie/sqlreplayer/issues) 提交问题
+- 🤝 **贡献代码**: 欢迎提交 Pull Request 来改进这个项目
+
+您的反馈对于改进 sqlreplayer 非常重要！

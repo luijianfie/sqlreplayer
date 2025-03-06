@@ -43,7 +43,7 @@ generate raw sql from general log,slow log or csv which can be used in sql repla
 
 <div align="center">
   <div style="max-width: 1000px; margin: 20px auto;">
-    <a href="example/rawsql_analyze_report.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
+    <a href="https://luijianfie.github.io/sqlreplayer/example/rawsql_analyze_report.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
       👉 View Complete Analysis Report
     </a>
   </div>
@@ -76,7 +76,7 @@ replay mode will replay sql The replay mode will replay the SQL in the specified
 
 <div align="center">
   <div style="max-width: 1000px; margin: 20px auto;">
-    <a href="example/replay_stats.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
+    <a href="https://luijianfie.github.io/sqlreplayer/example/replay_stats.html" style="display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; transition: background-color 0.3s;">
       👉 View Complete Replay Report
     </a>
   </div>
@@ -165,3 +165,14 @@ More usage can be referenced in the configuration of the demo.yaml file.
         thread num while replaying (default 1)
   -save-raw-sql  
         save raw sql in report
+
+# Contact Me
+
+If you have any questions or suggestions while using sqlreplayer, feel free to reach out through the following channels:
+
+- 📱 **WeChat**: `418901779`
+- 📧 **Email**: [luwenhaoterry@163.com](mailto:luwenhaoterry@163.com)
+- 💬 **Issues**: Welcome to submit issues on [GitHub Issues](https://github.com/luijianfie/sqlreplayer/issues)
+- 🤝 **Contribute**: Pull Requests are welcome to improve this project
+
+Your feedback is crucial for improving sqlreplayer!
