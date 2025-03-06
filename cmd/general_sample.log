@@ -1,0 +1,59 @@
+/usr/local/mysql/bin/mysqld, Version: 8.0.23 (MySQL Community Server - GPL). started with:
+Tcp port: 3306  Unix socket: /data/mysql/3306/data/mysql.sock
+Time                 Id Command    Argument
+2025-03-06T15:40:31.243652+08:00	   12 Quit	
+2025-03-06T15:51:23.482251+08:00	   13 Connect	admin@127.0.0.1 on  using SSL/TLS
+2025-03-06T15:51:23.482866+08:00	   13 Query	select @@version_comment limit 1
+2025-03-06T15:51:23.483968+08:00	   13 Query	select USER()
+2025-03-06T15:51:26.525695+08:00	   13 Query	SELECT DATABASE()
+2025-03-06T15:51:29.173133+08:00	   13 Query	show databases
+2025-03-06T15:51:31.830178+08:00	   13 Query	create database test
+2025-03-06T15:51:35.041173+08:00	   13 Query	SELECT DATABASE()
+2025-03-06T15:51:35.041871+08:00	   13 Init DB	test
+2025-03-06T15:51:35.043075+08:00	   13 Query	show databases
+2025-03-06T15:51:35.044371+08:00	   13 Query	show tables
+2025-03-06T15:51:37.133054+08:00	   13 Query	CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(50),
+    age INT,
+    city VARCHAR(50),
+    salary DECIMAL(10,2)
+)
+2025-03-06T15:51:43.631841+08:00	   13 Query	INSERT INTO users (name, age, city, salary) VALUES
+('Alice', 25, 'Beijing', 8000.00),
+('Bob', 30, 'Shanghai', 12000.50),
+('Charlie', 28, 'Guangzhou', 9500.75),
+('David', 35, 'Shenzhen', 11000.00),
+('Emma', 26, 'Beijing', 7800.25),
+('Frank', 40, 'Shanghai', 15000.00),
+('Grace', 32, 'Guangzhou', 9900.00),
+('Henry', 27, 'Shenzhen', 8600.50),
+('Ivy', 29, 'Beijing', 10200.75),
+('Jack', 33, 'Shanghai', 11200.00)
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 3
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 4
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 5
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 6
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 7
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 8
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 9
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 10
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 11
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 12
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 13
+2025-03-06T15:51:47.647387+08:00	   13 Query	SELECT * FROM users WHERE id = 14
+2025-03-06T15:51:50.478570+08:00	   13 Query	SELECT AVG(salary) AS avg_salary FROM users
+2025-03-06T15:51:53.623570+08:00	   13 Query	SELECT city, AVG(salary) AS avg_salary FROM users GROUP BY city
+2025-03-06T15:51:57.661013+08:00	   13 Query	SELECT city, COUNT(*) AS user_count FROM users GROUP BY city
+2025-03-06T15:52:01.336150+08:00	   13 Query	SELECT * FROM users ORDER BY salary DESC LIMIT 1
+2025-03-06T15:52:04.976837+08:00	   13 Query	SELECT * FROM users WHERE age > 30
+2025-03-06T15:52:08.250200+08:00	   13 Query	SELECT * FROM users WHERE salary > 10000
+2025-03-06T15:52:13.783013+08:00	   13 Query	SELECT * FROM users u1
+WHERE salary = (SELECT MAX(salary) FROM users u2 WHERE u1.city = u2.city)
+2025-03-06T15:52:17.095128+08:00	   13 Query	SELECT city, SUM(salary) AS total_salary FROM users GROUP BY city
+2025-03-06T15:52:36.217655+08:00	   13 Quit	
+2025-03-06T15:52:36.964257+08:00	   14 Connect	admin@127.0.0.1 on  using SSL/TLS
+2025-03-06T15:52:36.964888+08:00	   14 Query	select @@version_comment limit 1
+2025-03-06T15:52:36.966414+08:00	   14 Query	select USER()
+2025-03-06T15:52:47.618982+08:00	   14 Query	show variables like '%gen%'
+2025-03-06T15:52:53.036423+08:00	   14 Query	set global general_log=0

@@ -1,0 +1,30 @@
+/usr/local/mysql/bin/mysqld, Version: 8.0.23 (MySQL Community Server - GPL). started with:
+Tcp port: 3306  Unix socket: /data/mysql/3306/data/mysql.sock
+Time                 Id Command    Argument
+2025-03-06T16:00:32.018265+08:00	   21 Query	SELECT DATABASE()
+2025-03-06T16:00:32.018644+08:00	   21 Init DB	test
+2025-03-06T16:00:32.019934+08:00	   21 Query	show databases
+2025-03-06T16:00:32.021194+08:00	   21 Query	show tables
+2025-03-06T16:00:32.022432+08:00	   21 Field List	users 
+2025-03-06T16:01:02.800215+08:00	   21 Query	SELECT COUNT(*) AS total_users FROM users
+2025-03-06T16:01:08.301404+08:00	   21 Query	SELECT city, COUNT(*) AS user_count FROM users GROUP BY
+；
+2025-03-06T16:01:14.611888+08:00	   21 Query	SELECT city, COUNT(*) AS user_count FROM users GROUP BY city
+2025-03-06T16:01:17.485941+08:00	   21 Query	SELECT city, AVG(age) AS avg_age FROM users GROUP BY city
+2025-03-06T16:01:22.756073+08:00	   21 Query	SELECT * FROM users ORDER BY salary DESC LIMIT 3
+2025-03-06T16:01:25.665502+08:00	   21 Query	SELECT * FROM users ORDER BY salary ASC LIMIT 3
+2025-03-06T16:01:37.839741+08:00	   21 Query	SELECT id, name, salary, RANK() OVER (ORDER BY salary DESC) AS salary_rank FROM users
+2025-03-06T16:01:43.565797+08:00	   21 Query	SELECT id, name, city, salary, 
+       RANK() OVER (PARTITION BY city ORDER BY salary DESC) AS city_salary_rank
+FROM users
+2025-03-06T16:01:47.891225+08:00	   21 Query	SELECT id, name, salary, 
+       salary - LAG(salary) OVER (ORDER BY salary DESC) AS salary_diff
+FROM users
+2025-03-06T16:01:52.383619+08:00	   21 Query	SELECT * FROM users WHERE salary > (SELECT AVG(salary) FROM users)
+2025-03-06T16:01:56.247822+08:00	   21 Query	SELECT * FROM users WHERE salary = (SELECT MAX(salary) FROM users)
+2025-03-06T16:02:02.343833+08:00	   21 Query	SELECT * FROM users u1
+WHERE salary = (SELECT MAX(salary) FROM users u2 WHERE u1.city = u2.city)
+2025-03-06T16:02:12.353048+08:00	   21 Query	SELECT * FROM users WHERE city = 'Beijing'
+UNION
+SELECT * FROM users WHERE salary > 12000
+2025-03-06T16:02:20.324057+08:00	   21 Query	set global general_log=0
