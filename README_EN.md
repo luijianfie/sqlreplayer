@@ -8,9 +8,22 @@ analyze part support general log,slow log in mysql 5.6,5.7,8.0
 
 # why sqlreplayer
 
-The initial intention of using this tool is to compare the performance differences of SQL under multiple databases, and generate simple comparison results. 
-It mainly involves two parts. One is SQL collection, the tool supports collecting raw SQL from MySQL's full logs, slow logs, and CSV files for aggregation. The other is SQL replay, SQL replay supports replaying raw SQL on multiple data sources and obtaining comparison results.
+sqlreplayer is a specialized tool designed for database performance evaluation and SQL analysis. It addresses the following key scenarios:
 
+1. **SQL Pattern Analysis & Optimization**
+   - Analyze SQL patterns across multiple log files (e.g., in sharded database scenarios)
+   - Extract and aggregate SQL fingerprints to identify similar queries
+   - Generate detailed SQL statistics reports for performance optimization
+
+2. **Database Traffic Analysis**
+   - Collect and analyze database access patterns in real-time
+   - Monitor SQL execution frequency and performance metrics
+   - Identify potential performance bottlenecks
+
+3. **Database Migration & Upgrade Assessment**
+   - Evaluate SQL compatibility across different database versions
+   - Compare and analyze performance differences
+   - Provide detailed compatibility reports and performance comparison data
 
 # mode
 
