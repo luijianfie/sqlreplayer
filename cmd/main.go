@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const version = "3.0.1"
+const version = "3.0.2"
 
 var (
 	execType             string
