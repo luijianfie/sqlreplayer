@@ -39,6 +39,9 @@ var (
 	dir                  string
 	workNum              int
 	metafile             string
+	execTimeout          int
+	skipCount            int
+	skipSQLID            string
 )
 
 func main() {
@@ -98,6 +101,9 @@ func parseParam() *model.Config {
 	flag.StringVar(&configPath, "config", "", "Path to the configuration file")
 	flag.StringVar(&dir, "output", "", "output path")
 	flag.StringVar(&metafile, "metafile", "", "meta file from task which needed to resume")
+	flag.IntVar(&execTimeout, "exec-timeout", 600, "timeout for sql in replay phrase")
+	flag.IntVar(&skipCount, "skip-count", 10, "threhold for skip sql")
+	flag.StringVar(&skipSQLID, "skip-sqlid", "", "sqlid needed to skip,multi sqlid split by comma")
 
 	flag.Parse()
 
@@ -146,6 +152,9 @@ func parseParam() *model.Config {
 			Dir:                dir,
 			WorkerNum:          workNum,
 			Metafile:           metafile,
+			SkipSQLID:          skipSQLID,
+			ExecTimeout:        execTimeout,
+			SkipCount:          skipCount,
 		}
 	}
 

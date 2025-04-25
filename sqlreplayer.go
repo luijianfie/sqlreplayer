@@ -2,6 +2,7 @@ package sqlreplayer
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/gob"
 	"errors"
@@ -177,6 +178,12 @@ type SQLReplayer struct {
 
 	logger *zap.Logger `json:"-"`
 
+	skipCount      int
+	execTimeout    int //second
+	skipMutex      sync.Mutex
+	skipSQLIDCount map[string]int
+	skipSQLID      map[string]struct{}
+
 	//controller
 	stopchan            chan struct{}
 	donechan            chan struct{}
@@ -204,6 +211,9 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			taskchan:            make(chan int, TASK_CHAN_LENGTH),
 			replayCollector:     make(chan *sqlStatus, REPLAY_COLLECTOR_LENGTH),
 			replayCollectorDone: make(chan struct{}),
+
+			skipSQLIDCount: make(map[string]int),
+			skipSQLID:      make(map[string]struct{}),
 		}
 		sr.logger.Sugar().Infof("begin to load meta file from %s", c.Metafile)
 		err := sr.Load(c.Metafile)
@@ -240,6 +250,11 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			replayCollectorDone: make(chan struct{}),
 
 			Status: PROCESSING,
+
+			skipSQLIDCount: make(map[string]int),
+			skipSQLID:      make(map[string]struct{}),
+			execTimeout:    600,
+			skipCount:      10,
 		}
 
 		sr.Dir = c.Dir + fmt.Sprintf("sqlreplayer_task_%d", sr.JobSeq)
@@ -338,6 +353,24 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			// 	return nil, err
 			// }
 			// sr.replayStatFile = statFile
+
+			//parse sqlid into skip map
+			if len(c.SkipSQLID) > 0 {
+				sr.skipMutex.Lock()
+				sqlids := strings.Split(c.SkipSQLID, ",")
+				for _, sqlid := range sqlids {
+					sqlid = strings.TrimSpace(sqlid)
+					sr.skipSQLID[sqlid] = struct{}{}
+				}
+				sr.skipMutex.Unlock()
+			}
+
+			if c.SkipCount > 0 {
+				sr.skipCount = c.SkipCount
+			}
+			if c.ExecTimeout > 0 {
+				sr.execTimeout = c.ExecTimeout
+			}
 
 		}
 
@@ -1512,6 +1545,12 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 		return err
 	}
 
+	defer func() {
+		for _, db := range dbs {
+			db.Close()
+		}
+	}()
+
 	//begin time of stats
 	begin := time.Now()
 
@@ -1535,9 +1574,6 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 	for {
 		select {
 		case <-sr.stopchan:
-			for _, db := range dbs {
-				db.Close()
-			}
 			status = 2
 			e = errors.New("STOP")
 			break
@@ -1606,6 +1642,14 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 			sqlid, fingerprint = utils.GetQueryID(sql)
 			tablelist, _ := utils.ExtractTableNames(sql)
 
+			sr.skipMutex.Lock()
+			_, ok := sr.skipSQLID[sqlid]
+			sr.skipMutex.Unlock()
+
+			if ok {
+				continue
+			}
+
 			wg.Add(1)
 
 			ch <- struct{}{}
@@ -1624,20 +1668,35 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 						go func(index int) {
 							defer connwg.Done()
 
+							ctx, cancel := context.WithTimeout(context.Background(), time.Duration(sr.execTimeout)*time.Second)
+							defer cancel()
+
 							db := dbs[index]
 
 							errCount := 0
 							start := time.Now()
 
-							_, err := db.Exec(sql)
-
-							if err != nil {
-								sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", sqlid, sql, err.Error())
-								errCount = 1
-							}
+							_, err := db.ExecContext(ctx, sql)
 
 							elapsed := time.Since(start)
 							elapsedMilliseconds := elapsed.Milliseconds()
+
+							if err != nil {
+								sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", err.Error(), sqlid, sql)
+								errCount++
+
+								if err == context.DeadlineExceeded {
+
+									sr.skipMutex.Lock()
+
+									sr.skipSQLIDCount[sqlid]++
+									if sr.skipSQLIDCount[sqlid] > sr.skipCount {
+										sr.skipSQLID[sqlid] = struct{}{}
+										sr.logger.Sugar().Infof("sqlid:%s timeout more than 10 times, skip it.")
+									}
+									sr.skipMutex.Unlock()
+								}
+							}
 
 							s := &sqlStatus{
 								Sqlid:           sqlid,

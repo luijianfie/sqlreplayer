@@ -17,7 +17,10 @@ type Config struct {
 	GenerateReport     bool     `yaml:"generate_report"`
 	SaveRawSQLInReport bool     `yaml:"save_raw_sql"` // save raw sql in report
 	DryRun             bool     `yaml:"dry_run"`
-	WorkerNum          int      `yaml:"worker_num"` // number of workers,parallel degree for file
+	WorkerNum          int      `yaml:"worker_num"`   // number of workers,parallel degree for file
+	SkipSQLID          string   `yaml:"skip_sqlid"`   // skip sqlid in replay phrase
+	ExecTimeout        int      `yaml:"exec_timeout"` // timeout for each sql in replay phrase
+	SkipCount          int      `yaml:"skip_count"`   // timeout exceed skip_count,will skip this sqlid in replay phrase
 
 	Dir      string `yaml:"save_dir"`
 	Metafile string `yaml:"metafile"`
