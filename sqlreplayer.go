@@ -127,6 +127,7 @@ type sqlStatus struct {
 	Execution       uint64
 	DataSourceIndex int
 	ErrorCount      uint64
+	ErrorStr        string
 }
 
 type SQLReplayer struct {
@@ -440,6 +441,29 @@ func (sr *SQLReplayer) startReplayCollector() {
 
 	sr.logger.Sugar().Infof("start replay collector")
 
+	errMap := make(map[string]int)
+
+	defer func() {
+
+		errorFileDir := sr.Dir + "/replay_error"
+		errorFile, err := os.OpenFile(errorFileDir, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			sr.logger.Error(err.Error())
+			return
+		}
+
+		for k, v := range errMap {
+
+			_, err := errorFile.WriteString(k + "," + strconv.Itoa(v) + "\n")
+			if err != nil {
+				sr.logger.Sugar().Errorln("write error to file error:%s", err.Error())
+				break
+			}
+		}
+
+		errorFile.Close()
+	}()
+
 	defer close(sr.replayCollectorDone)
 	for {
 		select {
@@ -502,6 +526,14 @@ func (sr *SQLReplayer) startReplayCollector() {
 							}
 						}
 					}
+				}
+
+				//write error to file
+				if status.ErrorCount > 0 {
+
+					errKey := "Conn_" + strconv.Itoa(status.DataSourceIndex) + "," + status.Sqlid + "," + status.ErrorStr
+					errMap[errKey] += 1
+
 				}
 
 			}
@@ -1647,6 +1679,24 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 			sr.skipMutex.Unlock()
 
 			if ok {
+
+				for dataSourceIndex := range dbs {
+					s := &sqlStatus{
+						Sqlid:           sqlid,
+						SQL:             sql,
+						Fingerprint:     fingerprint,
+						Tablelist:       tablelist,
+						Execution:       1,
+						TimeElapse:      -1,
+						Min:             -1,
+						Max:             -1,
+						DataSourceIndex: dataSourceIndex,
+						ErrorCount:      1,
+						ErrorStr:        "sql in skip map",
+					}
+					sr.replayCollector <- s
+				}
+
 				continue
 			}
 
@@ -1674,6 +1724,7 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 							db := dbs[index]
 
 							errCount := 0
+							errStr := ""
 							start := time.Now()
 
 							_, err := db.ExecContext(ctx, sql)
@@ -1682,8 +1733,9 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 							elapsedMilliseconds := elapsed.Milliseconds()
 
 							if err != nil {
-								sr.logger.Sugar().Infof("error while executing sql. error:%s. \n sqlid:%s,%s", err.Error(), sqlid, sql)
+								sr.logger.Sugar().Infof("error while executing sql. error:%s.sqlid:%s,%s.", err.Error(), sqlid, sql)
 								errCount++
+								errStr = err.Error()
 
 								if err == context.DeadlineExceeded {
 
@@ -1692,9 +1744,11 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 									sr.skipSQLIDCount[sqlid]++
 									if sr.skipSQLIDCount[sqlid] > sr.skipCount {
 										sr.skipSQLID[sqlid] = struct{}{}
-										sr.logger.Sugar().Infof("sqlid:%s timeout more than 10 times, skip it.")
+										sr.logger.Sugar().Infof("sqlid:%s timeout more than 10 times, skip it.", sqlid)
 									}
 									sr.skipMutex.Unlock()
+
+									errStr = "exec more than " + strconv.Itoa(sr.execTimeout) + "s timeout"
 								}
 							}
 
@@ -1709,6 +1763,7 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 								Max:             elapsedMilliseconds,
 								DataSourceIndex: index,
 								ErrorCount:      uint64(errCount),
+								ErrorStr:        errStr,
 							}
 
 							//mark down this is a error sql
