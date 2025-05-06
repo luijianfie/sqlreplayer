@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const version = "3.0.3"
+const version = "3.1.0"
 
 var (
 	execType             string
@@ -82,28 +81,8 @@ func main() {
 
 func parseParam() *model.Config {
 
-	flag.StringVar(&execType, "exec", "", "exec type [analyze|replay|all]\nanalyze:generate raw sql from log file.\nreplay:replay raw sql in connections.")
-	flag.StringVar(&fileList, "filelist", "", "filename,multiple file seperated by ','")
-	flag.StringVar(&logType, "logtype", "", "log type [genlog|slowlog|csv]")
-	flag.StringVar(&beginStr, "begin", "0000-01-01 00:00:00", "filter sql according to specified begin time from log,format 2023-01-01 13:01:01")
-	flag.StringVar(&endStr, "end", "9999-12-31 23:59:59", "filter sql according to specified end time from log,format 2023-01-01 13:01:01")
-	flag.StringVar(&connStr, "conn", "", "mysql connection string,support multiple connections seperated by ',' which can be used for comparation,format type:user1:passwd1:ip1:port1:db1[,type:user2:passwd2:ip2:port2:db2]")
-	flag.StringVar(&charSet, "charset", "utf8mb4", "charset of connection")
-	flag.IntVar(&threads, "threads", 1, "thread num while replaying")
-	flag.IntVar(&multiplier, "multi", 1, "number of times a raw sql to be executed while replaying")
-	flag.IntVar(&workNum, "worker-num", 4, "number of worker while parsing or replaying multiple files")
-	flag.StringVar(&replaySQLType, "sql-type", "query", "replay statement [query|dml|ddl|all], moer than one type can be specified by comma, for example query,ddl,default:query")
-	flag.StringVar(&replayFilter, "sql-filter", "", "regular expression to filter sql")
-	flag.BoolVar(&ifGenerateReport, "generate-report", false, "generate report for analyze phrase")
-	flag.BoolVar(&ifSaveRawSQLInReport, "save-raw-sql", false, "save raw sql in report")
-	flag.BoolVar(&ifDryRun, "dry-run", false, "replay raw sql without collecting any extra info")
 	flag.BoolVar(&verbose, "v", false, "display version information")
-	flag.StringVar(&configPath, "config", "", "Path to the configuration file")
-	flag.StringVar(&dir, "output", "", "output path")
-	flag.StringVar(&metafile, "metafile", "", "meta file from task which needed to resume")
-	flag.IntVar(&execTimeout, "exec-timeout", 600, "timeout for sql in replay phrase")
-	flag.IntVar(&skipCount, "skip-count", 10, "threhold for skip sql")
-	flag.StringVar(&skipSQLID, "skip-sqlid", "", "sqlid needed to skip,multi sqlid split by comma")
+	flag.StringVar(&configPath, "config", "config.yaml", "Path to the configuration file")
 
 	flag.Parse()
 
@@ -128,34 +107,11 @@ func parseParam() *model.Config {
 			return nil
 		}
 
+		cf.SetDefaults()
+
 		return &cf
-	} else {
-
-		fileNames := strings.Split(fileList, ",")
-		connList := strings.Split(connStr, ",")
-
-		return &model.Config{
-			ExecType:           execType,
-			FileList:           fileNames,
-			LogType:            logType,
-			Begin:              beginStr,
-			End:                endStr,
-			Conns:              connList,
-			Charset:            charSet,
-			Thread:             threads,
-			Multi:              multiplier,
-			ReplaySQLType:      replaySQLType,
-			ReplayFilter:       replayFilter,
-			SaveRawSQLInReport: ifSaveRawSQLInReport,
-			GenerateReport:     ifGenerateReport,
-			DryRun:             ifDryRun,
-			Dir:                dir,
-			WorkerNum:          workNum,
-			Metafile:           metafile,
-			SkipSQLID:          skipSQLID,
-			ExecTimeout:        execTimeout,
-			SkipCount:          skipCount,
-		}
 	}
+
+	return nil
 
 }

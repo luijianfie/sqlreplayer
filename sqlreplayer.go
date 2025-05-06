@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dlclark/regexp2"
 	"github.com/dustin/go-humanize"
 	"github.com/luijianfie/sqlreplayer/connector"
 	"github.com/luijianfie/sqlreplayer/model"
@@ -185,6 +184,9 @@ type SQLReplayer struct {
 	skipSQLIDCount map[string]int
 	skipSQLID      map[string]struct{}
 
+	RawMapping []model.RawMappingRule
+	Rules      []model.MappingRule
+
 	//controller
 	stopchan            chan struct{}
 	donechan            chan struct{}
@@ -224,6 +226,23 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 
 		if err != nil {
 			return nil, err
+		}
+
+		if len(c.RawMapping) > 0 {
+
+			sr.RawMapping = c.RawMapping
+			for _, raw := range sr.RawMapping {
+
+				re, err := regexp.Compile(raw.Pattern)
+				if err != nil {
+					continue
+				}
+				sr.Rules = append(sr.Rules, model.MappingRule{
+					Pattern:     re,
+					Replacement: raw.Replacement,
+				})
+
+			}
 		}
 
 	} else {
@@ -371,6 +390,23 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			}
 			if c.ExecTimeout > 0 {
 				sr.execTimeout = c.ExecTimeout
+			}
+
+			if len(c.RawMapping) > 0 {
+
+				sr.RawMapping = c.RawMapping
+				for _, raw := range sr.RawMapping {
+
+					re, err := regexp.Compile(raw.Pattern)
+					if err != nil {
+						continue
+					}
+					sr.Rules = append(sr.Rules, model.MappingRule{
+						Pattern:     re,
+						Replacement: raw.Replacement,
+					})
+
+				}
 			}
 
 		}
@@ -1598,9 +1634,13 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 	var e error
 
 	//init replay filter
-	var filter *regexp2.Regexp
+	var filter *regexp.Regexp
 	if len(sr.ReplayFilter) > 0 {
-		filter = regexp2.MustCompile(sr.ReplayFilter, regexp2.IgnoreCase)
+		var err error
+		filter, err = regexp.Compile("(?i)" + sr.ReplayFilter)
+		if err != nil {
+			return err
+		}
 	}
 
 	for {
@@ -1635,10 +1675,13 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 
 			//filter sql
 			if filter != nil {
-				if matched, _ := filter.MatchString(sql); matched {
+				if filter.MatchString(sql) {
 					continue
 				}
 			}
+
+			//mapping
+			sql = utils.SQLMapper(sql, sr.Rules)
 
 			//check if sql is a SELECT statement
 			rets, err := utils.GetSQLStatement(sql)
