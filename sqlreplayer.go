@@ -181,6 +181,7 @@ type SQLReplayer struct {
 	skipCount      int
 	execTimeout    int //second
 	skipMutex      sync.Mutex
+	SQLID          map[string]struct{}
 	skipSQLIDCount map[string]int
 	skipSQLID      map[string]struct{}
 
@@ -215,6 +216,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			replayCollector:     make(chan *sqlStatus, REPLAY_COLLECTOR_LENGTH),
 			replayCollectorDone: make(chan struct{}),
 
+			SQLID:          make(map[string]struct{}),
 			skipSQLIDCount: make(map[string]int),
 			skipSQLID:      make(map[string]struct{}),
 		}
@@ -271,6 +273,7 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 
 			Status: PROCESSING,
 
+			SQLID:          make(map[string]struct{}),
 			skipSQLIDCount: make(map[string]int),
 			skipSQLID:      make(map[string]struct{}),
 			execTimeout:    600,
@@ -374,7 +377,18 @@ func NewSQLReplayer(jobSeq uint64, c *model.Config) (*SQLReplayer, error) {
 			// }
 			// sr.replayStatFile = statFile
 
-			//parse sqlid into skip map
+			//parse sqlid and skip sqlid into skip map
+
+			if len(c.SQLID) > 0 {
+				sr.skipMutex.Lock()
+				sqlids := strings.Split(c.SQLID, ",")
+				for _, sqlid := range sqlids {
+					sqlid = strings.TrimSpace(sqlid)
+					sr.SQLID[sqlid] = struct{}{}
+				}
+				sr.skipMutex.Unlock()
+			}
+
 			if len(c.SkipSQLID) > 0 {
 				sr.skipMutex.Lock()
 				sqlids := strings.Split(c.SkipSQLID, ",")
@@ -479,14 +493,14 @@ func (sr *SQLReplayer) startReplayCollector() {
 
 	errMap := make(map[string]int)
 
-	defer func() {
+	errorFileDir := sr.Dir + "/replay_error"
+	errorFile, err := os.OpenFile(errorFileDir, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		sr.logger.Error(err.Error())
+		return
+	}
 
-		errorFileDir := sr.Dir + "/replay_error"
-		errorFile, err := os.OpenFile(errorFileDir, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			sr.logger.Error(err.Error())
-			return
-		}
+	defer func() {
 
 		for k, v := range errMap {
 
@@ -569,6 +583,12 @@ func (sr *SQLReplayer) startReplayCollector() {
 
 					errKey := "Conn_" + strconv.Itoa(status.DataSourceIndex) + "," + status.Sqlid + "," + status.ErrorStr
 					errMap[errKey] += 1
+
+					_, err := errorFile.WriteString(status.Sqlid + "," + status.ErrorStr + "," + status.SQL + "\n")
+					if err != nil {
+						sr.logger.Sugar().Errorln("write error to file error:%s", err.Error())
+						break
+					}
 
 				}
 
@@ -1716,6 +1736,13 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 			//generate sqlid,table list for sql
 			sqlid, fingerprint = utils.GetQueryID(sql)
 			tablelist, _ := utils.ExtractTableNames(sql)
+
+			//we won't modify map sr.SQLID , it is save to read it without lock
+			if len(sr.SQLID) > 0 {
+				if _, ok := sr.SQLID[sqlid]; !ok {
+					continue
+				}
+			}
 
 			sr.skipMutex.Lock()
 			_, ok := sr.skipSQLID[sqlid]
