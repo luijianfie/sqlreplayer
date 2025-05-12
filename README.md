@@ -167,7 +167,7 @@ conns:
 # 参数说明
 
   执行类型
-  -exec string  
+  exec string  
         exec type [analyze|replay|both]  
         analyze:generate raw sql from log file.  
         replay:replay raw sql in connections.  
@@ -175,25 +175,25 @@ conns:
 ## analyze
 
 分析日志时候加入时间条件  
-  -begin string  
+  begin string  
         filter sql according to specified begin time from log,format 2023-01-01 13:01:01 (default "0000-01-01 00:00:00")  
-  -end string  
+  end string  
         filter sql according to specified end time from log,format 2023-01-01 13:01:01 (default "9999-12-31 23:59:59")  
 
 分析日志路径  
-  -filelist string  
+  filelist string  
         filename,multiple file seperated by ','  
 
 日志格式  
-  -logtype string  
+  logtype string  
         log type [genlog|slowlog|csv]  
 
 生成raw sql的报告，按照sqlid进行汇总，主要是针对slowlog带有运行时间的日志格式，其他格式只能进行汇总，统计次数  
-  -generate-report  
+  generate-report  
         generate report for analyze phrase  
 
 生成报告是否保存raw sql信息
-  -save-raw-sql  
+  save-raw-sql  
         save raw sql in report  
 
 
@@ -202,32 +202,49 @@ conns:
 
 ## replay
 连接charset  
- -charset string  
+  charset string  
         charset of connection (default "utf8mb4")  
 
 数据库连接  
- -conn string  
+  conn string  
         mysql connection string,support multiple connections seperated by ',' which can be used for comparation,format   user1:passwd1:ip1:port1:db1[,user2:passwd2:ip2:port2:db2]  
 
 回放文件  
-  -filelist string  
+  filelist string  
         filename,multiple file seperated by ','  
 
 回放倍数  
-  -m int  
+  m int  
         number of times a raw sql to be executed while replaying (default 1)  
 
 只回访查询语句  
-  -sql-mode
+  sql-mode
         replay statement [query|dml|ddl|all], moer than one type can be specified by comma, for example query,ddl,default:query
 
 并发数  
-  -threads int  
+  threads int  
         thread num while replaying (default 1)  
 
 replay报告是否保存raw sql信息
-  -save-raw-sql  
+  save-raw-sql  
         save raw sql in report  
+
+sql过滤（正则）
+  sql_filter string
+
+指定回放sqlid，多个sqlid以逗号分隔
+  sqlid string
+
+回放单个SQL超时，单位秒
+  exec_timeout int
+
+达到错误次数，该SQLID后续跳过，不再执行
+  skip_count int
+
+SQL映射
+replay_mapping_rules:
+  - pattern: "(?i)(`?)(retail_fas_db\\d+)(`?)\\."
+    replacement: "retail_fas"
 
 
 # 联系我

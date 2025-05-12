@@ -584,7 +584,7 @@ func (sr *SQLReplayer) startReplayCollector() {
 					errKey := "Conn_" + strconv.Itoa(status.DataSourceIndex) + "," + status.Sqlid + "," + status.ErrorStr
 					errMap[errKey] += 1
 
-					_, err := errorFile.WriteString(status.Sqlid + "," + status.ErrorStr + "," + status.SQL + "\n")
+					_, err := errorFile.WriteString("Conn_" + strconv.Itoa(status.DataSourceIndex) + "," + status.Sqlid + "," + status.ErrorStr + "," + status.SQL + "\n")
 					if err != nil {
 						sr.logger.Sugar().Errorln("write error to file error:%s", err.Error())
 						break
@@ -1748,26 +1748,10 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 			_, ok := sr.skipSQLID[sqlid]
 			sr.skipMutex.Unlock()
 
+			//we use skipFlag to markdown wether we should skip this sql
+			skipFlag := false
 			if ok {
-
-				for dataSourceIndex := range dbs {
-					s := &sqlStatus{
-						Sqlid:           sqlid,
-						SQL:             sql,
-						Fingerprint:     fingerprint,
-						Tablelist:       tablelist,
-						Execution:       1,
-						TimeElapse:      -1,
-						Min:             -1,
-						Max:             -1,
-						DataSourceIndex: dataSourceIndex,
-						ErrorCount:      1,
-						ErrorStr:        "sql in skip map",
-					}
-					sr.replayCollector <- s
-				}
-
-				continue
+				skipFlag = true
 			}
 
 			wg.Add(1)
@@ -1797,6 +1781,10 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 							errStr := ""
 							start := time.Now()
 
+							if skipFlag {
+								sql = "explain " + sql
+							}
+
 							_, err := db.ExecContext(ctx, sql)
 
 							elapsed := time.Since(start)
@@ -1814,7 +1802,7 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 									sr.skipSQLIDCount[sqlid]++
 									if sr.skipSQLIDCount[sqlid] > sr.skipCount {
 										sr.skipSQLID[sqlid] = struct{}{}
-										sr.logger.Sugar().Infof("sqlid:%s timeout more than 10 times, skip it.", sqlid)
+										sr.logger.Sugar().Infof("sqlid:%s timeout more than %d times, skip it.", sqlid, sr.skipCount)
 									}
 									sr.skipMutex.Unlock()
 
@@ -1822,28 +1810,32 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 								}
 							}
 
-							s := &sqlStatus{
-								Sqlid:           sqlid,
-								SQL:             sql,
-								Fingerprint:     fingerprint,
-								Tablelist:       tablelist,
-								Execution:       1,
-								TimeElapse:      elapsedMilliseconds,
-								Min:             elapsedMilliseconds,
-								Max:             elapsedMilliseconds,
-								DataSourceIndex: index,
-								ErrorCount:      uint64(errCount),
-								ErrorStr:        errStr,
-							}
+							//if skipFlag is false we always send result to collector
+							//if skipFlag is true and we only send result to collector when err !=nil ,that means sql can't be parsed.
+							if !skipFlag || (skipFlag && err != nil) {
+								s := &sqlStatus{
+									Sqlid:           sqlid,
+									SQL:             sql,
+									Fingerprint:     fingerprint,
+									Tablelist:       tablelist,
+									Execution:       1,
+									TimeElapse:      elapsedMilliseconds,
+									Min:             elapsedMilliseconds,
+									Max:             elapsedMilliseconds,
+									DataSourceIndex: index,
+									ErrorCount:      uint64(errCount),
+									ErrorStr:        errStr,
+								}
 
-							//mark down this is a error sql
-							if errCount > 0 {
-								s.TimeElapse = -1
-								s.Min = -1
-								s.Max = -1
-							}
+								//mark down this is a error sql
+								if errCount > 0 {
+									s.TimeElapse = -1
+									s.Min = -1
+									s.Max = -1
+								}
 
-							sr.replayCollector <- s
+								sr.replayCollector <- s
+							}
 
 						}(ind)
 					}
