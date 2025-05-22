@@ -554,24 +554,24 @@ func (sr *SQLReplayer) startReplayCollector() {
 							s.Min = status.TimeElapse
 							s.Max = status.TimeElapse
 							if sr.SaveRawSQLInReport {
-								s.Minsql = s.SQL
-								s.Maxsql = s.SQL
+								s.Minsql = status.SQL
+								s.Maxsql = status.SQL
 							}
 
 						} else {
 
 							s.TimeElapse += status.TimeElapse
-							if s.Min > s.TimeElapse {
-								s.Min = s.TimeElapse
+							if s.Min > status.TimeElapse {
+								s.Min = status.TimeElapse
 								if sr.SaveRawSQLInReport {
-									s.Minsql = s.SQL
+									s.Minsql = status.SQL
 								}
 							}
 
-							if s.Max < s.TimeElapse {
-								s.Max = s.TimeElapse
+							if s.Max < status.TimeElapse {
+								s.Max = status.TimeElapse
 								if sr.SaveRawSQLInReport {
-									s.Maxsql = s.SQL
+									s.Maxsql = status.SQL
 								}
 							}
 						}
@@ -1780,12 +1780,13 @@ func (sr *SQLReplayer) replayRawSQL(t *task) error {
 							errCount := 0
 							errStr := ""
 							start := time.Now()
+							execSQL := sql
 
 							if skipFlag {
-								sql = "explain " + sql
+								execSQL = "explain " + execSQL
 							}
 
-							_, err := db.ExecContext(ctx, sql)
+							_, err := db.ExecContext(ctx, execSQL)
 
 							elapsed := time.Since(start)
 							elapsedMilliseconds := elapsed.Milliseconds()
